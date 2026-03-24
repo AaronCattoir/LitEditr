@@ -1,0 +1,25 @@
+# Full Workflow DAG
+
+```mermaid
+flowchart TD
+    rawDoc[RawDocument] --> chunker[llm_char_chunker]
+    genreIntent[GenreIntention] --> documentStateBuilder[document_state_builder]
+    chunker --> plotOverview[plot_overview_builder]
+    plotOverview --> globalSummary[global_summary]
+    globalSummary --> calibration[calibration_pass_first_chunk]
+    calibration --> loop[for_each_chunk]
+    loop --> contextBuilder[context_builder]
+    contextBuilder --> paragraphAnalyzer[paragraph_analyzer]
+    paragraphAnalyzer --> voiceProfiler[voice_profiler]
+    voiceProfiler --> documentStateBuilder
+    documentStateBuilder --> detectors[run_all_detectors]
+    detectors --> critic[critic_agent]
+    critic --> defense[defense_agent]
+    defense --> editorJudge[editor_judge]
+    editorJudge --> elasticity[elasticity_evaluator]
+    elasticity --> collect[append_chunk_judgment]
+    collect --> loop
+    loop --> reportCollector[report_collector]
+    reportCollector --> editorialReport[EditorialReport]
+
+```

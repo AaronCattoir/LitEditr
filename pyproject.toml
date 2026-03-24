@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "editr"
+version = "0.1.0"
+description = "Advisory-only editorial analysis DAG for long-form narrative text"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "langgraph>=1.1.2",
+    "langchain-core>=1.2.19",
+    "langchain-google-genai>=2.1.12",
+    "langchain-google-vertexai>=1.0.5",
+    "langchain-openai>=1.1.11",
+    "pydantic>=2.0",
+    "python-dotenv>=1.0.0",
+    "click>=8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+filterwarnings = [
+    "ignore:Core Pydantic V1 functionality isn't compatible with Python 3.14 or greater\\.:UserWarning",
+    "ignore:The class `ChatVertexAI` was deprecated in LangChain 3\\.2\\.0.*:Warning",
+]
