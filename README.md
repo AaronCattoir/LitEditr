@@ -8,11 +8,37 @@ Advisory-only editorial analysis DAG for long-form narrative text (stories, nove
 pip install -e ".[dev]"
 ```
 
+For the HTTP API and MCP server:
+
+```bash
+pip install -e ".[dev,api,mcp]"
+```
+
 ## Run
 
 ```bash
 python -m narrative_dag.cli --help
 ```
+
+### HTTP API (FastAPI)
+
+```bash
+editr-api
+# or: python -m narrative_dag.api
+```
+
+Default DB path: `EDITR_DB_PATH` (falls back to `editr.sqlite`). Endpoints include `GET /health`, `POST /v1/documents`, `POST /v1/documents/{id}/revisions`, `POST /v1/revisions/{revision_id}/analyze` (202 + job), `GET /v1/jobs/{job_id}`, `GET /v1/runs`, `GET /v1/revisions/{id}/chunks`, `POST /v1/chat`.
+
+### MCP (stdio)
+
+```bash
+editr-mcp
+```
+
+### Environment
+
+- `EDITR_DB_PATH` — SQLite file for runs, SCD2 revisions, jobs, and analytic facts (default `editr.sqlite`).
+- `MEM0_API_KEY` — optional; when set and `mem0` is installed, analysis summaries can sync to Mem0.
 
 ## Architecture
 

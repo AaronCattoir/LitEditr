@@ -48,8 +48,18 @@ class _StructuredInvoker:
             "EmotionalHonestyResult": {"mismatch": False, "expected_emotion": "tension", "actual_text_signal": "tension"},
             "RedundancyResult": {"redundant_with": [], "type": "idea"},
             "RiskResult": {"risk_type": "stylistic", "payoff": "working"},
-            "CriticResult": {"critique": "Some compression issues.", "failure_points": ["compression"], "verdict": "weak"},
-            "DefenseResult": {"defense": "Compression supports pacing.", "valid_points": ["pacing"], "salvageability": "high"},
+            "CriticResult": {
+                "critique": "Some compression issues.",
+                "failure_points": ["compression"],
+                "verdict": "weak",
+                "evidence_spans": [],
+            },
+            "DefenseResult": {
+                "defense": "Compression supports pacing.",
+                "valid_points": ["pacing"],
+                "salvageability": "high",
+                "evidence_spans": [],
+            },
             "EditorJudgment": {
                 "decision": "rewrite",
                 "severity": 0.5,
@@ -57,6 +67,7 @@ class _StructuredInvoker:
                 "core_issue": "compression",
                 "guidance": "Tighten transitions and specificity.",
                 "is_drift": False,
+                "evidence_spans": [],
             },
             "ElasticityResult": {
                 "is_intentional_deviation": False,

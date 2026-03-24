@@ -69,3 +69,4 @@ Prompts live under `src/narrative_dag/prompts/` (mirrors node domains).
 _Add a dated bullet when you change the DAG, node I/O, or orchestration._
 
 - **2026-03-23** — Initial context file. Documented split between `build_chunk_pipeline_graph()` (compiled per-chunk DAG) and `run_analysis()` (full imperative orchestration with matching per-chunk loop). Noted absence of a compiled LangGraph for chat; interaction nodes are service-driven.
+- **2026-03-23** — Persistent `EDITR_DB_PATH`, SCD2 `document_revisions` / `chunk_versions`, star-style `analytic_facts`, revision events, async jobs, FastAPI (`narrative_dag.api.app`), MCP (`mcp_server.py`), evidence spans + `evidence_fill`, `run_analysis(..., only_chunk_ids=...)` for incremental reruns, `build_incremental_chunk_graph()` alias.

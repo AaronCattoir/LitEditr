@@ -10,6 +10,7 @@ import narrative_dag.llm as llm_runtime
 from narrative_dag.llm import structured_invoke
 from narrative_dag.prompt_context import build_prompt_context
 from narrative_dag.prompts.conflict import critic_prompt, defense_prompt
+from narrative_dag.evidence_fill import fill_critic_spans, fill_defense_spans
 from narrative_dag.schemas import CriticResult, DefenseResult
 
 
@@ -42,6 +43,7 @@ def critic_agent(state: dict[str, Any]) -> dict[str, Any]:
         return {"critic_result": CriticResult()}
     prompt = critic_prompt(prompt_ctx, _detector_snapshot(state))
     result = structured_invoke(_state_llm(state), [HumanMessage(content=prompt)], CriticResult)
+    result = fill_critic_spans(state, result)
     return {"critic_result": result}
 
 
@@ -54,5 +56,6 @@ def defense_agent(state: dict[str, Any]) -> dict[str, Any]:
     critic_text = critic.model_dump_json() if hasattr(critic, "model_dump_json") else str(critic)
     prompt = defense_prompt(prompt_ctx, _detector_snapshot(state), critic_text)
     result = structured_invoke(_state_llm(state), [HumanMessage(content=prompt)], DefenseResult)
+    result = fill_defense_spans(state, result)
     return {"defense_result": result}
 

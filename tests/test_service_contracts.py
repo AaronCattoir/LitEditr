@@ -16,6 +16,8 @@ def test_analyze_document_contract(temp_db_path):
     response = service.analyze_document(request)
     assert response.success
     assert response.run_id
+    assert response.document_id
+    assert response.revision_id
     assert response.report.run_id == response.run_id
     assert len(response.report.chunk_judgments) == 3
     service.close()

@@ -10,6 +10,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Persistent SQLite path for CLI, MCP, and API (avoid :memory: for cross-request chat).
+DEFAULT_DB_PATH = os.getenv("EDITR_DB_PATH", "editr.sqlite")
+
 
 @dataclass
 class GenreProfile:

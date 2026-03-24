@@ -19,6 +19,11 @@ class AnalyzeDocumentRequest(BaseModel):
     reference_authors: list[str] = Field(default_factory=list)
     title: str | None = None
     author: str | None = None
+    document_id: str | None = Field(default=None, description="Existing workspace document; creates one if omitted")
+    revision_id: str | None = Field(
+        default=None,
+        description="Existing revision to attach lineage to; a new revision row is created from document_text if omitted",
+    )
 
 
 class AnalyzeDocumentResponse(BaseModel):
@@ -28,6 +33,8 @@ class AnalyzeDocumentResponse(BaseModel):
     report: EditorialReport
     success: bool = True
     error: str | None = None
+    document_id: str | None = None
+    revision_id: str | None = None
 
 
 class ChatRequest(BaseModel):

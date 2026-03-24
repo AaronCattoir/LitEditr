@@ -10,6 +10,7 @@ import narrative_dag.llm as llm_runtime
 from narrative_dag.llm import structured_invoke
 from narrative_dag.prompt_context import build_prompt_context
 from narrative_dag.prompts.judgment import editor_judgment_prompt, elasticity_prompt
+from narrative_dag.evidence_fill import fill_judgment_spans
 from narrative_dag.schemas import (
     ChunkJudgmentEntry,
     EditorJudgment,
@@ -54,6 +55,7 @@ def editor_judge(state: dict[str, Any]) -> dict[str, Any]:
         defense.model_dump_json() if hasattr(defense, "model_dump_json") else str(defense),
     )
     result = structured_invoke(_state_llm(state), [HumanMessage(content=prompt)], EditorJudgment)
+    result = fill_judgment_spans(state, result)
     return {"editor_judgment": result}
 
 

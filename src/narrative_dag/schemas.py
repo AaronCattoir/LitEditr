@@ -207,6 +207,18 @@ class RiskResult(BaseModel):
     payoff: Literal["working", "failing"] = "working"
 
 
+# --- Evidence spans (UI highlights; absolute offsets in revision text) ---
+
+
+class EvidenceSpan(BaseModel):
+    """Character offsets into the document revision text (0-based, end exclusive)."""
+
+    start_char: int = Field(..., ge=0)
+    end_char: int = Field(..., ge=0)
+    quote: str = ""
+    label: str = ""
+
+
 # --- Conflict layer ---
 
 
@@ -214,12 +226,14 @@ class CriticResult(BaseModel):
     critique: str = ""
     failure_points: list[str] = Field(default_factory=list)
     verdict: Literal["fail", "weak", "borderline"] = "borderline"
+    evidence_spans: list[EvidenceSpan] = Field(default_factory=list)
 
 
 class DefenseResult(BaseModel):
     defense: str = ""
     valid_points: list[str] = Field(default_factory=list)
     salvageability: Literal["high", "medium", "low"] = "medium"
+    evidence_spans: list[EvidenceSpan] = Field(default_factory=list)
 
 
 # --- Judgment layer ---
@@ -234,6 +248,7 @@ class EditorJudgment(BaseModel):
     core_issue: str = ""
     guidance: str = ""
     is_drift: bool = False
+    evidence_spans: list[EvidenceSpan] = Field(default_factory=list)
 
 
 class ElasticityResult(BaseModel):

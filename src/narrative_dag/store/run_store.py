@@ -41,17 +41,68 @@ class RunStore:
         genre: str | None = None,
         title: str | None = None,
         author: str | None = None,
+        *,
+        document_id: str | None = None,
+        revision_id: str | None = None,
+        analysis_kind: str = "full",
     ) -> None:
         cur = self._conn.cursor()
         now = datetime.now(timezone.utc).isoformat()
         cur.execute(
             """
-            INSERT OR REPLACE INTO runs (run_id, created_at, genre, document_title, document_author, metadata_json)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO runs (
+                run_id, created_at, genre, document_title, document_author, metadata_json,
+                document_id, revision_id, analysis_kind
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (run_id, now, genre or "", title or "", author or "", "{}"),
+            (
+                run_id,
+                now,
+                genre or "",
+                title or "",
+                author or "",
+                "{}",
+                document_id,
+                revision_id,
+                analysis_kind,
+            ),
         )
         self._conn.commit()
+
+    def list_runs(self, limit: int = 50) -> list[dict[str, Any]]:
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT run_id, created_at, genre, document_title, document_author, document_id, revision_id, analysis_kind
+            FROM runs
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "run_id": r[0],
+                "created_at": r[1],
+                "genre": r[2],
+                "document_title": r[3],
+                "document_author": r[4],
+                "document_id": r[5],
+                "revision_id": r[6],
+                "analysis_kind": r[7],
+            }
+            for r in rows
+        ]
+
+    def list_chunks_for_run(self, run_id: str) -> list[dict[str, Any]]:
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT chunk_id, position FROM run_chunks WHERE run_id = ? ORDER BY position ASC",
+            (run_id,),
+        )
+        return [{"chunk_id": r[0], "position": r[1]} for r in cur.fetchall()]
 
     def save_chunk_artifact(self, run_id: str, chunk_id: str, position: int, payload: dict[str, Any]) -> None:
         cur = self._conn.cursor()

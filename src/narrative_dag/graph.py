@@ -60,6 +60,11 @@ def build_chunk_pipeline_graph():
     return builder.compile()
 
 
+def build_incremental_chunk_graph():
+    """Same topology as `build_chunk_pipeline_graph`; use when re-running dirty chunks only with state pre-seeded."""
+    return build_chunk_pipeline_graph()
+
+
 def run_analysis(
     raw_document: RawDocument,
     genre_intention: GenreIntention,
@@ -69,6 +74,7 @@ def run_analysis(
     on_chunk_done: (
         Callable[[str, str, int, dict, Any, Any], None] | None
     ) = None,
+    only_chunk_ids: set[str] | None = None,
 ) -> tuple[dict[str, Any], list[ChunkJudgmentEntry]]:
     """Run full analysis: chunker, then per-chunk pipeline, then report.
     on_chunk_done(run_id, chunk_id, position, artifact_dict, judgment, elasticity) called after each chunk.
@@ -130,6 +136,8 @@ def run_analysis(
     # 5) Per-chunk pipeline
     chunk_judgments: list[ChunkJudgmentEntry] = []
     for i, ch in enumerate(chunks):
+        if only_chunk_ids is not None and ch.id not in only_chunk_ids:
+            continue
         _log(f"[5/6] chunk {i+1}/{len(chunks)} ({ch.id})...")
         chunk_t0 = time.time()
         st = {
