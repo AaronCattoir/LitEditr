@@ -9,6 +9,7 @@ from typing import Any, Callable
 from langgraph.graph import END, StateGraph
 
 import narrative_dag.llm as llm_runtime
+from narrative_dag.llm import RunLLMBundle
 from narrative_dag.nodes.ingestion import run_chunker, run_context_builder
 from narrative_dag.nodes.plot_overview import plot_overview_builder
 from narrative_dag.nodes.character_map import character_map_builder
@@ -26,10 +27,22 @@ from narrative_dag.nodes.judgment import (
     build_chunk_judgment_entry,
 )
 from narrative_dag.schemas import (
+    Chunk,
     ChunkJudgmentEntry,
+    DocumentState,
     GenreIntention,
     RawDocument,
 )
+
+
+def _replay_representation_for_chunk(base: dict[str, Any], ch: Chunk) -> dict[str, Any]:
+    """Advance document_state through context / paragraph / voice / doc_state only (no detectors / judge)."""
+    st = {**base, "current_chunk_id": ch.id}
+    st = {**st, **run_context_builder(st)}
+    st = {**st, **paragraph_analyzer(st)}
+    st = {**st, **voice_profiler(st)}
+    st = {**st, **run_document_state_builder(st)}
+    return st
 
 
 def build_chunk_pipeline_graph():
@@ -75,9 +88,13 @@ def run_analysis(
         Callable[[str, str, int, dict, Any, Any], None] | None
     ) = None,
     only_chunk_ids: set[str] | None = None,
+    client_chunks: list[Chunk] | None = None,
+    seed_document_state: DocumentState | None = None,
+    bundle: RunLLMBundle | None = None,
 ) -> tuple[dict[str, Any], list[ChunkJudgmentEntry]]:
-    """Run full analysis: chunker, then per-chunk pipeline, then report.
+    """Run full analysis: chunker (or pre-built client chunks), then per-chunk pipeline, then report.
     on_chunk_done(run_id, chunk_id, position, artifact_dict, judgment, elasticity) called after each chunk.
+    If client_chunks is provided and non-empty, run_chunker is skipped.
     """
     def _log(msg: str) -> None:
         print(msg, file=sys.stderr, flush=True)
@@ -85,9 +102,14 @@ def run_analysis(
     t0 = time.time()
 
     _log("[init] creating LLM clients (default/detector/judgment)...")
-    llm = llm_runtime.get_llm()
-    llm_detector = llm_runtime.get_llm(stage="detector")
-    llm_judge = llm_runtime.get_llm(stage="judgment")
+    if bundle is not None:
+        llm = bundle.llm
+        llm_detector = bundle.llm_detector
+        llm_judge = bundle.llm_judge
+    else:
+        llm = llm_runtime.get_llm()
+        llm_detector = llm_runtime.get_llm(stage="detector")
+        llm_judge = llm_runtime.get_llm(stage="judgment")
     state: dict[str, Any] = {
         "raw_document": raw_document,
         "genre_intention": genre_intention,
@@ -100,9 +122,13 @@ def run_analysis(
         "_llm_judge": llm_judge,
     }
 
-    # 1) Chunker
-    _log("[1/5] chunking document...")
-    state = {**state, **run_chunker(state)}
+    # 1) Chunker or client-provided chunks
+    if client_chunks:
+        _log("[1/5] using client-defined chunks...")
+        state["chunks"] = client_chunks
+    else:
+        _log("[1/5] chunking document...")
+        state = {**state, **run_chunker(state)}
 
     chunks = state.get("chunks") or []
     if not chunks:
@@ -123,15 +149,54 @@ def run_analysis(
     state = {**state, **character_map_builder(state)}
     _log(f"[3/6] character database done ({time.time()-t0:.1f}s)")
 
-    # 4) Document state baseline from first chunk (calibration)
-    _log("[4/6] calibrating on first chunk...")
-    state["current_chunk_id"] = chunks[0].id
-    state = {**state, **run_context_builder(state)}
-    state = {**state, **paragraph_analyzer(state)}
-    state = {**state, **voice_profiler(state)}
-    state = {**state, **run_document_state_builder(state)}
-    doc_state = state.get("document_state")
-    _log(f"[4/6] calibration done ({time.time()-t0:.1f}s)")
+    # 4) Document state baseline: full run calibrates on first chunk; partial runs may seed from base
+    # and replay representation for chunks before the first target so middle inserts see coherent context.
+    first_target_idx = 0
+    if only_chunk_ids:
+        idxs = [i for i, c in enumerate(chunks) if c.id in only_chunk_ids]
+        if idxs:
+            first_target_idx = min(idxs)
+
+    base_for_replay: dict[str, Any] = {
+        "raw_document": raw_document,
+        "chunks": chunks,
+        "genre_intention": genre_intention,
+        "global_summary": state.get("global_summary", ""),
+        "plot_overview": state.get("plot_overview"),
+        "character_database": state.get("character_database"),
+        "_llm": llm,
+        "_llm_detector": llm_detector,
+        "_llm_judge": llm_judge,
+    }
+
+    doc_state: DocumentState | None
+    if only_chunk_ids and seed_document_state is not None:
+        _log("[4/6] seeding document_state from base run + replaying preceding chunks...")
+        doc_state = seed_document_state.model_copy(deep=True)
+        state["document_state"] = doc_state
+        for i in range(0, first_target_idx):
+            _log(f"[4/6] replay representation {i + 1}/{first_target_idx} ({chunks[i].id})...")
+            rep = {**base_for_replay, "document_state": doc_state}
+            rep = _replay_representation_for_chunk(rep, chunks[i])
+            doc_state = rep.get("document_state") or doc_state
+        state["document_state"] = doc_state
+        _log(f"[4/6] seed + replay done ({time.time()-t0:.1f}s)")
+    else:
+        _log("[4/6] calibrating on first chunk...")
+        state["current_chunk_id"] = chunks[0].id
+        state = {**state, **run_context_builder(state)}
+        state = {**state, **paragraph_analyzer(state)}
+        state = {**state, **voice_profiler(state)}
+        state = {**state, **run_document_state_builder(state)}
+        doc_state = state.get("document_state")
+        if only_chunk_ids and first_target_idx > 1:
+            for i in range(1, first_target_idx):
+                _log(f"[4/6] replay representation before partial targets ({chunks[i].id})...")
+                rep = {**base_for_replay, "document_state": doc_state}
+                rep = _replay_representation_for_chunk(rep, chunks[i])
+                doc_state = rep.get("document_state") or doc_state
+            state["document_state"] = doc_state
+        _log(f"[4/6] calibration done ({time.time()-t0:.1f}s)")
 
     # 5) Per-chunk pipeline
     chunk_judgments: list[ChunkJudgmentEntry] = []
@@ -172,7 +237,14 @@ def run_analysis(
         judgment = st.get("editor_judgment")
         elasticity = st.get("elasticity_result")
         if judgment:
-            entry = build_chunk_judgment_entry(ch.id, i, judgment, elasticity)
+            entry = build_chunk_judgment_entry(
+                ch.id,
+                i,
+                judgment,
+                elasticity,
+                critic_result=st.get("critic_result"),
+                defense_result=st.get("defense_result"),
+            )
             chunk_judgments.append(entry)
         doc_state = st.get("document_state") or doc_state
         if on_chunk_done and judgment is not None:
@@ -204,6 +276,8 @@ def run_analysis(
                 "current_judgment": judgment.model_dump(),
             }
             on_chunk_done(run_id, ch.id, i, artifact, judgment, elasticity)
+
+    state["document_state"] = doc_state
 
     # 6) Report
     _log(f"[6/6] building report...")

@@ -13,6 +13,8 @@ from narrative_dag.prompts.judgment import editor_judgment_prompt, elasticity_pr
 from narrative_dag.evidence_fill import fill_judgment_spans
 from narrative_dag.schemas import (
     ChunkJudgmentEntry,
+    CriticResult,
+    DefenseResult,
     EditorJudgment,
     ElasticityResult,
     EditorialReport,
@@ -21,7 +23,7 @@ from narrative_dag.schemas import (
 
 def _state_llm(state: dict[str, Any]) -> Any:
     llm = state.get("_llm_judge") or state.get("_llm")
-    return llm if llm is not None else llm_runtime.get_llm()
+    return llm if llm is not None else llm_runtime.get_llm(stage="judgment")
 
 
 def _detector_snapshot(state: dict[str, Any]) -> str:
@@ -97,12 +99,42 @@ def report_collector(state: dict[str, Any]) -> dict[str, Any]:
     return {"editorial_report": report}
 
 
+def _optional_critic(raw: Any) -> CriticResult | None:
+    if raw is None:
+        return None
+    if isinstance(raw, CriticResult):
+        return raw
+    if isinstance(raw, dict):
+        return CriticResult.model_validate(raw)
+    return None
+
+
+def _optional_defense(raw: Any) -> DefenseResult | None:
+    if raw is None:
+        return None
+    if isinstance(raw, DefenseResult):
+        return raw
+    if isinstance(raw, dict):
+        return DefenseResult.model_validate(raw)
+    return None
+
+
 def build_chunk_judgment_entry(
     chunk_id: str,
     position: int,
     judgment: EditorJudgment,
     elasticity: ElasticityResult | None,
+    *,
+    critic_result: Any = None,
+    defense_result: Any = None,
 ) -> ChunkJudgmentEntry:
     """Helper to build one ChunkJudgmentEntry for report_collector."""
-    return ChunkJudgmentEntry(chunk_id=chunk_id, position=position, judgment=judgment, elasticity=elasticity)
+    return ChunkJudgmentEntry(
+        chunk_id=chunk_id,
+        position=position,
+        judgment=judgment,
+        elasticity=elasticity,
+        critic_result=_optional_critic(critic_result),
+        defense_result=_optional_defense(defense_result),
+    )
 

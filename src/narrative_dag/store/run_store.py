@@ -6,7 +6,6 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from narrative_dag.db import get_connection
 from narrative_dag.schemas import (
     Chunk,
     ContextBundle,
@@ -19,6 +18,18 @@ from narrative_dag.schemas import (
 )
 
 
+def document_state_has_story_map(ds: DocumentState) -> bool:
+    """True if persisted document state has enough global story context for quick coach."""
+    po = ds.plot_overview
+    if po:
+        if (po.story_point or "").strip() or (po.plot_summary or "").strip():
+            return True
+    cdb = ds.character_database
+    if cdb and cdb.characters:
+        return True
+    return False
+
+
 def _serialize(obj: Any) -> str:
     if hasattr(obj, "model_dump"):
         return json.dumps(obj.model_dump())
@@ -27,6 +38,22 @@ def _serialize(obj: Any) -> str:
 
 def _doc_state_from_dict(d: dict[str, Any]) -> DocumentState:
     return DocumentState.model_validate(d)
+
+
+def serialize_story_wide_for_api(ds: DocumentState) -> dict[str, Any]:
+    """JSON-serializable story-wide fields from persisted run document_state."""
+    po = ds.plot_overview
+    cdb = ds.character_database
+    vb: Any = ds.voice_baseline
+    if hasattr(vb, "model_dump"):
+        vb = vb.model_dump(mode="json")
+    return {
+        "plot_overview": po.model_dump(mode="json") if po is not None else None,
+        "character_database": cdb.model_dump(mode="json") if cdb is not None else None,
+        "narrative_map": list(ds.narrative_map),
+        "emotional_curve": list(ds.emotional_curve),
+        "voice_baseline": vb,
+    }
 
 
 class RunStore:
@@ -69,6 +96,111 @@ class RunStore:
             ),
         )
         self._conn.commit()
+
+    def get_revision_id_for_run(self, run_id: str) -> str | None:
+        cur = self._conn.cursor()
+        cur.execute("SELECT revision_id FROM runs WHERE run_id = ?", (run_id,))
+        row = cur.fetchone()
+        if not row or row[0] is None:
+            return None
+        return str(row[0])
+
+    def find_latest_run_with_story_map(self, revision_id: str) -> str | None:
+        """Latest full run for revision that has run_document_state + story map content."""
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT r.run_id FROM runs r
+            INNER JOIN run_document_state rds ON r.run_id = rds.run_id
+            WHERE r.revision_id = ?
+            AND (r.analysis_kind IN ('full', 'partial') OR r.analysis_kind IS NULL)
+            ORDER BY r.created_at DESC
+            """,
+            (revision_id,),
+        )
+        for (run_id,) in cur.fetchall():
+            ds = self.get_document_state(run_id)
+            if ds and document_state_has_story_map(ds):
+                return run_id
+        return None
+
+    def find_latest_run_for_revision(self, revision_id: str) -> str | None:
+        """Latest run id for a revision, regardless of story-map completeness."""
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT run_id
+            FROM runs
+            WHERE revision_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (revision_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return str(row[0])
+
+    def find_latest_run_for_document(self, document_id: str) -> str | None:
+        """Latest run for any revision of this document (same manuscript lineage)."""
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT run_id
+            FROM runs
+            WHERE document_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (document_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return str(row[0])
+
+    def find_latest_run_for_document_with_story_map(self, document_id: str) -> str | None:
+        """Latest full/partial run on a document that has usable story-wide context."""
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT r.run_id FROM runs r
+            INNER JOIN run_document_state rds ON r.run_id = rds.run_id
+            WHERE r.document_id = ?
+            AND (r.analysis_kind IN ('full', 'partial') OR r.analysis_kind IS NULL)
+            ORDER BY r.created_at DESC
+            """,
+            (document_id,),
+        )
+        for (run_id,) in cur.fetchall():
+            ds = self.get_document_state(run_id)
+            if ds and document_state_has_story_map(ds):
+                return run_id
+        return None
+
+    def get_run_row(self, run_id: str) -> dict[str, Any] | None:
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT run_id, created_at, genre, document_title, document_author, document_id, revision_id, analysis_kind
+            FROM runs WHERE run_id = ?
+            """,
+            (run_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "run_id": row[0],
+            "created_at": row[1],
+            "genre": row[2],
+            "document_title": row[3],
+            "document_author": row[4],
+            "document_id": row[5],
+            "revision_id": row[6],
+            "analysis_kind": row[7],
+        }
 
     def list_runs(self, limit: int = 50) -> list[dict[str, Any]]:
         cur = self._conn.cursor()
@@ -134,6 +266,14 @@ class RunStore:
         if not row:
             return None
         return json.loads(row[0])
+
+    def has_chunk_artifact(self, run_id: str, chunk_id: str) -> bool:
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT 1 FROM run_chunks WHERE run_id = ? AND chunk_id = ? LIMIT 1",
+            (run_id, chunk_id),
+        )
+        return cur.fetchone() is not None
 
     def get_document_state(self, run_id: str) -> DocumentState | None:
         cur = self._conn.cursor()

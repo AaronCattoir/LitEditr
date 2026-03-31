@@ -17,6 +17,10 @@ class GenreIntention(BaseModel):
     subgenre_tags: list[str] = Field(default_factory=list)
     tone_descriptors: list[str] = Field(default_factory=list)
     reference_authors: list[str] = Field(default_factory=list)
+    short_story_single_chapter: bool = Field(
+        default=False,
+        description="True when the work is a single-chapter short story; relax multi-chapter arc expectations",
+    )
 
 
 class RawDocument(BaseModel):
@@ -104,13 +108,26 @@ class ParagraphAnalysis(BaseModel):
     weakness: str = ""
 
 
+class VoiceLayer(BaseModel):
+    """One axis of voice — fixed shape for LLM structured output (no open-ended dicts)."""
+
+    summary: str = Field(
+        default="",
+        description="2–4 sentences grounded in the target passage; empty if truly not applicable",
+    )
+    observations: list[str] = Field(
+        default_factory=list,
+        description="Short evidence-backed notes (e.g. diction, cadence); max ~8 items",
+    )
+
+
 class VoiceProfile(BaseModel):
     """Structured voice features (lexical, syntactic, rhetorical, psychological)."""
 
-    lexical: dict[str, Any] = Field(default_factory=dict)
-    syntactic: dict[str, Any] = Field(default_factory=dict)
-    rhetorical: dict[str, Any] = Field(default_factory=dict)
-    psychological: dict[str, Any] = Field(default_factory=dict)
+    lexical: VoiceLayer = Field(default_factory=VoiceLayer)
+    syntactic: VoiceLayer = Field(default_factory=VoiceLayer)
+    rhetorical: VoiceLayer = Field(default_factory=VoiceLayer)
+    psychological: VoiceLayer = Field(default_factory=VoiceLayer)
 
 
 class DialogueAnalysis(BaseModel):
@@ -130,12 +147,26 @@ class AllowedVariance(BaseModel):
     )
 
 
+class ArcMapEntry(BaseModel):
+    """One beat in the narrative arc.
+
+    OpenAI structured outputs reject ``list[dict[str, Any]]`` (items must declare
+    fixed properties with additionalProperties: false). Use explicit fields here.
+    """
+
+    phase: str = Field(
+        default="",
+        description="Beat label, e.g. setup, inciting incident, rising action, climax, resolution",
+    )
+    summary: str = Field(default="", description="What happens in this phase")
+
+
 class PlotOverview(BaseModel):
     """Global plot summary for editor context (story point, arc, stakes)."""
 
     plot_summary: str = Field(default="", description="Short global synopsis")
     story_point: str = Field(default="", description="What the story is fundamentally about")
-    arc_map: list[dict[str, Any]] = Field(
+    arc_map: list[ArcMapEntry] = Field(
         default_factory=list,
         description="Beginning/middle/end, turning points",
     )
@@ -267,6 +298,8 @@ class ChunkJudgmentEntry(BaseModel):
     position: int
     judgment: EditorJudgment
     elasticity: ElasticityResult | None = None
+    critic_result: CriticResult | None = None
+    defense_result: DefenseResult | None = None
 
 
 class EditorialReport(BaseModel):
@@ -299,6 +332,14 @@ class ContextBundle(BaseModel):
     defense_result: DefenseResult | None = None
     current_judgment: EditorJudgment | None = None
     genre_intention: GenreIntention | None = None
+
+
+class QuickCoachAdvice(BaseModel):
+    """Short structured tip from the sparkle quick-coach path (no full pipeline)."""
+
+    headline: str = ""
+    bullets: list[str] = Field(default_factory=list, max_length=8)
+    try_next: str | None = None
 
 
 class ChatTurn(BaseModel):

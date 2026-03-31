@@ -36,10 +36,22 @@ class _StructuredInvoker:
                 "weakness": "",
             },
             "VoiceProfile": {
-                "lexical": {"sentence_length_avg": 15},
-                "syntactic": {"complexity": 0.6},
-                "rhetorical": {"emphasis": "moderate"},
-                "psychological": {"distance": "close"},
+                "lexical": {
+                    "summary": "Plain, concrete diction with short sentences.",
+                    "observations": ["Low register", "Concrete nouns"],
+                },
+                "syntactic": {
+                    "summary": "Mostly simple clauses with occasional fragments.",
+                    "observations": ["Varied sentence length"],
+                },
+                "rhetorical": {
+                    "summary": "Understated; irony implied more than stated.",
+                    "observations": [],
+                },
+                "psychological": {
+                    "summary": "Close interior distance; withheld emotion.",
+                    "observations": ["Reticent narrator"],
+                },
             },
             "DialogueAnalysis": {"speaker": "", "style_features": {}, "distinctiveness_score": 0.6},
             "DriftResult": {"drift_score": 0.2, "drift_type": "tone", "evidence": "minor shift", "confidence": 0.7},
@@ -73,6 +85,11 @@ class _StructuredInvoker:
                 "is_intentional_deviation": False,
                 "justification": "Deviation is not strongly intentional.",
                 "override_drift": False,
+            },
+            "QuickCoachAdvice": {
+                "headline": "Tighten the beat",
+                "bullets": ["Clarify intent", "Ground the gesture"],
+                "try_next": "Add one sensory line.",
             },
             "CharacterDatabase": {
                 "characters": [

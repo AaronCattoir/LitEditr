@@ -56,7 +56,7 @@ def _bundle_text(bundle: ContextBundle) -> str:
 
 def _state_llm(state: dict[str, Any]) -> Any:
     llm = state.get("_llm")
-    return llm if llm is not None else llm_runtime.get_llm()
+    return llm if llm is not None else llm_runtime.get_llm(stage="chat")
 
 
 def judge_explainer(bundle: ContextBundle, user_message: str, llm: Any) -> str:

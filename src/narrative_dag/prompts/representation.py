@@ -31,10 +31,13 @@ def voice_profile_prompt(ctx: PromptContext, paragraph_intent: str) -> str:
                 "Describe lexical, syntactic, rhetorical, and psychological voice features",
                 "Separate character/narrator idiom from accidental clumsiness",
                 "Judge style in relation to the declared genre and story pressure",
+                "Ground every summary and observation in the TARGET CHUNK; quote brief phrases only when useful",
             ],
         )
         + editorial_policy_block()
         + f"\nParagraph intent: {paragraph_intent}\n\n"
+        + "Return structured output only. Fill every voice dimension: a non-empty summary and, when useful, "
+        "several short observations (concrete, passage-grounded).\n\n"
         + format_prompt_context(ctx)
     )
 

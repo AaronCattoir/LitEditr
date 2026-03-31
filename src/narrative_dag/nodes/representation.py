@@ -23,8 +23,19 @@ from narrative_dag.schemas import (
     DocumentState,
     ParagraphAnalysis,
     PlotOverview,
+    VoiceLayer,
     VoiceProfile,
 )
+
+
+def _replace_or_append_by_chunk_id(entries: list[dict[str, Any]], new_entry: dict[str, Any]) -> list[dict[str, Any]]:
+    """Keep at most one entry per chunk_id, preferring the newest value."""
+    chunk_id = str(new_entry.get("chunk_id") or "").strip()
+    if not chunk_id:
+        return entries
+    filtered = [e for e in entries if str((e or {}).get("chunk_id") or "").strip() != chunk_id]
+    filtered.append(new_entry)
+    return filtered
 
 
 def _state_llm(state: dict[str, Any]) -> Any:
@@ -76,6 +87,48 @@ def voice_profiler(state: dict[str, Any]) -> dict[str, Any]:
     return {"voice_profile": profile}
 
 
+def _coerce_voice_profile(value: Any) -> VoiceProfile:
+    if isinstance(value, VoiceProfile):
+        return value
+    if isinstance(value, dict):
+        return VoiceProfile.model_validate(value) if value else VoiceProfile()
+    return VoiceProfile()
+
+
+def _voice_profile_has_content(vp: VoiceProfile) -> bool:
+    for layer in (vp.lexical, vp.syntactic, vp.rhetorical, vp.psychological):
+        if layer.summary.strip():
+            return True
+        if any((o or "").strip() for o in layer.observations):
+            return True
+    return False
+
+
+def _merge_voice_profiles(prior: VoiceProfile, current: VoiceProfile, max_obs: int = 8) -> VoiceProfile:
+    def merge_layer(a: VoiceLayer, b: VoiceLayer) -> VoiceLayer:
+        summary = (b.summary.strip() or a.summary.strip()).strip()
+        seen: set[str] = set()
+        obs: list[str] = []
+        for src in (a.observations, b.observations):
+            for x in src:
+                t = (x or "").strip()
+                if t and t not in seen:
+                    seen.add(t)
+                    obs.append(t)
+                    if len(obs) >= max_obs:
+                        break
+            if len(obs) >= max_obs:
+                break
+        return VoiceLayer(summary=summary, observations=obs)
+
+    return VoiceProfile(
+        lexical=merge_layer(prior.lexical, current.lexical),
+        syntactic=merge_layer(prior.syntactic, current.syntactic),
+        rhetorical=merge_layer(prior.rhetorical, current.rhetorical),
+        psychological=merge_layer(prior.psychological, current.psychological),
+    )
+
+
 def dialogue_analyzer(state: dict[str, Any]) -> dict[str, Any] | None:
     """Track character voice consistency via LLM."""
     ctx = state.get("context_window")
@@ -105,9 +158,14 @@ def document_state_builder(
     if not isinstance(prior_doc_state, DocumentState):
         prior_doc_state = DocumentState()
 
-    voice_baseline = state.get("voice_profile") or prior_doc_state.voice_baseline or {}
-    if isinstance(voice_baseline, dict) and voice_baseline:
-        voice_baseline = VoiceProfile.model_validate(voice_baseline)
+    prior_vp = _coerce_voice_profile(prior_doc_state.voice_baseline)
+    current_vp = _coerce_voice_profile(state.get("voice_profile"))
+    if not _voice_profile_has_content(current_vp):
+        voice_baseline = prior_vp
+    elif not _voice_profile_has_content(prior_vp):
+        voice_baseline = current_vp
+    else:
+        voice_baseline = _merge_voice_profiles(prior_vp, current_vp)
 
     emotional_curve = list(prior_doc_state.emotional_curve)
     emotional_curve.extend(list(state.get("emotional_curve", [])))
@@ -115,7 +173,10 @@ def document_state_builder(
     if isinstance(pa, dict):
         pa = ParagraphAnalysis.model_validate(pa)
     if isinstance(pa, ParagraphAnalysis):
-        emotional_curve.append({"chunk_id": state.get("current_chunk_id", ""), "register": pa.emotional_register})
+        emotional_curve = _replace_or_append_by_chunk_id(
+            emotional_curve,
+            {"chunk_id": state.get("current_chunk_id", ""), "register": pa.emotional_register},
+        )
     emotional_curve = emotional_curve[-calibration_chunks:]
 
     narrative_map = list(prior_doc_state.narrative_map)
@@ -124,7 +185,10 @@ def document_state_builder(
     if isinstance(ctx, dict):
         ctx = ContextWindow.model_validate(ctx)
     if isinstance(ctx, ContextWindow):
-        narrative_map.append({"chunk_id": ctx.target_chunk.id, "intent": getattr(pa, "intent", "")})
+        narrative_map = _replace_or_append_by_chunk_id(
+            narrative_map,
+            {"chunk_id": ctx.target_chunk.id, "intent": getattr(pa, "intent", "")},
+        )
     narrative_map = narrative_map[-100:]
 
     character_voice_map = dict(prior_doc_state.character_voice_map)

@@ -2,23 +2,32 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Callable
 from typing import Any
 
-from narrative_dag.config import DEFAULT_DB_PATH
+import narrative_dag.config as config_module
 from narrative_dag.contracts import (
     AnalyzeDocumentRequest,
     AnalyzeDocumentResponse,
     ChatRequest,
     ChatResponse,
+    QuickCoachResponse,
 )
+from narrative_dag.chunk_spans import validate_and_build_chunks_from_spans
 from narrative_dag.graph import run_analysis
-import narrative_dag.llm as llm_runtime
+from narrative_dag.llm import build_run_llm_bundle, resolve_run_llm_provider
 import narrative_dag.mem0_hooks as mem0_hooks
 from narrative_dag.db import init_db
+from narrative_dag.nodes.ingestion import build_context_window
+from narrative_dag.nodes.judgment import build_chunk_judgment_entry
+from narrative_dag.quick_coach_diff import is_quick_coach_oob
 from narrative_dag.schemas import (
+    Chunk,
+    ChunkJudgmentEntry,
     EditorialReport,
+    ElasticityResult,
     GenreIntention,
     RawDocument,
 )
@@ -32,7 +41,7 @@ class NarrativeAnalysisService:
     """Orchestration entrypoint. All clients call this; CLI/API are thin adapters."""
 
     def __init__(self, db_path: str | None = None) -> None:
-        self._db_path = db_path if db_path is not None else DEFAULT_DB_PATH
+        self._db_path = db_path if db_path is not None else config_module.DEFAULT_DB_PATH
         self._conn = None
         self._run_store = None
         self._judgment_store = None
@@ -76,12 +85,63 @@ class NarrativeAnalysisService:
                 subgenre_tags=request.subgenre_tags,
                 tone_descriptors=request.tone_descriptors,
                 reference_authors=request.reference_authors,
+                short_story_single_chapter=request.short_story_single_chapter,
             )
             doc = RawDocument(
                 text=request.document_text,
                 title=request.title,
                 author=request.author,
             )
+            client_chunks: list[Chunk] | None = None
+            if request.chunks:
+                try:
+                    spans = [(c.chunk_id, c.start_char, c.end_char) for c in request.chunks]
+                    client_chunks = validate_and_build_chunks_from_spans(request.document_text, spans)
+                except ValueError as ve:
+                    return AnalyzeDocumentResponse(
+                        run_id="",
+                        report=EditorialReport(run_id="", chunk_judgments=[], document_summary=""),
+                        success=False,
+                        error=str(ve),
+                        document_id=request.document_id,
+                        revision_id=None,
+                    )
+
+            only_ids: set[str] | None = None
+            if request.only_chunk_ids:
+                only_ids = set(request.only_chunk_ids)
+                if not request.document_id:
+                    return AnalyzeDocumentResponse(
+                        run_id="",
+                        report=EditorialReport(run_id="", chunk_judgments=[], document_summary=""),
+                        success=False,
+                        error="document_id is required for partial analysis",
+                        document_id=None,
+                        revision_id=None,
+                    )
+                br = self._run_store.get_run_row(request.base_run_id or "")
+                if not br:
+                    return AnalyzeDocumentResponse(
+                        run_id="",
+                        report=EditorialReport(run_id="", chunk_judgments=[], document_summary=""),
+                        success=False,
+                        error="base_run_id not found",
+                        document_id=request.document_id,
+                        revision_id=None,
+                    )
+                if br.get("document_id") != request.document_id:
+                    return AnalyzeDocumentResponse(
+                        run_id="",
+                        report=EditorialReport(run_id="", chunk_judgments=[], document_summary=""),
+                        success=False,
+                        error="base_run_id belongs to a different document",
+                        document_id=request.document_id,
+                        revision_id=None,
+                    )
+                assert request.base_run_id is not None
+                # New chunk ids (e.g. inserted middle sections) are allowed in only_chunk_ids; they are
+                # analyzed fresh while non-target chunks merge from base_run_id.
+
             run_id = str(uuid.uuid4())
 
             document_id = request.document_id
@@ -115,6 +175,7 @@ class NarrativeAnalysisService:
                     },
                 )
 
+            analysis_kind = "partial" if only_ids else "full"
             self._run_store.save_run_meta(
                 run_id,
                 genre=request.genre,
@@ -122,7 +183,7 @@ class NarrativeAnalysisService:
                 author=request.author,
                 document_id=document_id,
                 revision_id=revision_id,
-                analysis_kind="full",
+                analysis_kind=analysis_kind,
             )
 
             def on_chunk_done(run_id_arg, chunk_id, position, artifact_dict, judgment, elasticity):
@@ -131,13 +192,89 @@ class NarrativeAnalysisService:
                     run_id_arg, chunk_id, judgment, source="editor_judge", rationale=""
                 )
 
+            seed_ds = (
+                self._run_store.get_document_state(request.base_run_id)
+                if only_ids and request.base_run_id
+                else None
+            )
+            llm_bundle = build_run_llm_bundle(resolve_run_llm_provider(request.provider))
             state, chunk_judgments = run_analysis(
                 raw_document=doc,
                 genre_intention=genre,
                 run_id=run_id,
                 db_path=self._db_path,
                 on_chunk_done=on_chunk_done,
+                client_chunks=client_chunks,
+                only_chunk_ids=only_ids,
+                seed_document_state=seed_ds,
+                bundle=llm_bundle,
             )
+
+            final_chunk_judgments = list(chunk_judgments)
+            if only_ids and request.base_run_id:
+                base_id = request.base_run_id
+                chunks = state.get("chunks") or []
+                gs = state.get("global_summary", "")
+                base_ds = self._run_store.get_document_state(base_id)
+                for i, ch in enumerate(chunks):
+                    if ch.id not in only_ids:
+                        base_art = self._run_store.get_chunk_artifact(base_id, ch.id)
+                        if not base_art:
+                            return AnalyzeDocumentResponse(
+                                run_id="",
+                                report=EditorialReport(run_id="", chunk_judgments=[], document_summary=""),
+                                success=False,
+                                error=f"missing base artifact for chunk {ch.id}",
+                                document_id=document_id,
+                                revision_id=revision_id,
+                            )
+                        art = json.loads(json.dumps(base_art))
+                        cw = build_context_window(chunks, ch.id, global_summary=gs)
+                        art["target_chunk"] = ch.model_dump()
+                        art["context_window"] = {
+                            "target_chunk": cw.target_chunk.model_dump(),
+                            "previous_chunks": [c.model_dump() for c in cw.previous_chunks],
+                            "next_chunks": [c.model_dump() for c in cw.next_chunks],
+                            "global_summary": cw.global_summary,
+                        }
+                        self._run_store.save_chunk_artifact(run_id, ch.id, i, art)
+                        jv = self._judgment_store.get_latest_judgment(base_id, ch.id)
+                        if jv:
+                            self._judgment_store.save_judgment(
+                                run_id,
+                                ch.id,
+                                jv.judgment,
+                                source="editor_judge",
+                                rationale="copied from base run",
+                            )
+                merged: list[ChunkJudgmentEntry] = []
+                for i, ch in enumerate(chunks):
+                    if ch.id in only_ids:
+                        entry = next((x for x in chunk_judgments if x.chunk_id == ch.id), None)
+                        if entry:
+                            merged.append(entry)
+                    else:
+                        jv = self._judgment_store.get_latest_judgment(run_id, ch.id)
+                        if jv:
+                            base_art = self._run_store.get_chunk_artifact(base_id, ch.id)
+                            merged.append(
+                                build_chunk_judgment_entry(
+                                    ch.id,
+                                    i,
+                                    jv.judgment,
+                                    ElasticityResult(),
+                                    critic_result=base_art.get("critic_result") if base_art else None,
+                                    defense_result=base_art.get("defense_result") if base_art else None,
+                                )
+                            )
+                final_chunk_judgments = merged
+                merged_ds = state.get("document_state")
+                if merged_ds is not None:
+                    self._run_store.save_document_state(run_id, merged_ds)
+                elif base_ds is not None:
+                    self._run_store.save_document_state(run_id, base_ds)
+            elif state.get("document_state") is not None:
+                self._run_store.save_document_state(run_id, state["document_state"])
 
             chunks = state.get("chunks") or []
             if revision_id and chunks:
@@ -155,8 +292,7 @@ class NarrativeAnalysisService:
                             char_db,
                             name_to_id,
                         )
-                        # Persist judgment fact for analytics / star schema
-                        for cj in chunk_judgments:
+                        for cj in final_chunk_judgments:
                             if cj.chunk_id == ch.id:
                                 self._document_store.save_analytic_fact(
                                     run_id,
@@ -167,23 +303,18 @@ class NarrativeAnalysisService:
                                 )
                                 break
 
-            doc_state = state.get("document_state")
-            if doc_state is not None:
-                self._run_store.save_document_state(run_id, doc_state)
+            er = state.get("editorial_report")
+            doc_sum = "Analysis complete."
+            if isinstance(er, dict):
+                doc_sum = er.get("document_summary") or doc_sum
+            elif er is not None and getattr(er, "document_summary", None):
+                doc_sum = str(er.document_summary)
 
-            report = state.get("editorial_report")
-            if isinstance(report, dict):
-                report = EditorialReport(
-                    run_id=report.get("run_id", run_id),
-                    chunk_judgments=report.get("chunk_judgments", chunk_judgments),
-                    document_summary=report.get("document_summary", ""),
-                )
-            elif report is None:
-                report = EditorialReport(
-                    run_id=run_id,
-                    chunk_judgments=chunk_judgments,
-                    document_summary="Analysis complete.",
-                )
+            report = EditorialReport(
+                run_id=run_id,
+                chunk_judgments=final_chunk_judgments,
+                document_summary=doc_sum,
+            )
 
             mem0_hooks.sync_document_summary_if_enabled(
                 user_id=document_id,
@@ -201,6 +332,7 @@ class NarrativeAnalysisService:
                 success=True,
                 document_id=document_id,
                 revision_id=revision_id,
+                analysis_kind=analysis_kind,
             )
         except Exception as e:
             return AnalyzeDocumentResponse(
@@ -209,6 +341,79 @@ class NarrativeAnalysisService:
                 success=False,
                 error=str(e),
             )
+
+    def quick_coach_advice(
+        self,
+        run_id: str,
+        chunk_id: str,
+        revision_id: str,
+        focus: str | None,
+        *,
+        current_chunk_text: str | None = None,
+        short_story_single_chapter: bool = False,
+        provider: str | None = None,
+    ) -> QuickCoachResponse:
+        """Single LLM call for sparkle quick coach; expects validated run_id + chunk_id."""
+        try:
+            self._ensure_db()
+            assert self._run_store is not None and self._document_store is not None
+            bundle = self._run_store.get_context_bundle(run_id, chunk_id)
+            if not bundle:
+                return QuickCoachResponse(
+                    success=False,
+                    error="chunk not found in run",
+                    error_code="chunk_not_in_run",
+                    revision_id=revision_id,
+                )
+            from narrative_dag.nodes.quick_coach import run_quick_coach
+
+            qc_llm = build_run_llm_bundle(resolve_run_llm_provider(provider)).llm_quick_coach
+            analyzed_text = bundle.target_chunk.text
+            current = current_chunk_text
+            if current is None:
+                current = self._document_store.get_revision_chunk_text(revision_id, chunk_id)
+
+            if current is not None:
+                oob, delta, thr = is_quick_coach_oob(analyzed_text, current)
+                if oob:
+                    return QuickCoachResponse(
+                        success=False,
+                        error=(
+                            "This section changed too much since the last analysis. "
+                            "Run a full manuscript analysis (Submit All) or reanalyze this section."
+                        ),
+                        error_code="quick_coach_oob",
+                        requires_reanalysis=True,
+                        delta_chars=delta,
+                        threshold_chars=thr,
+                        analyzed_char_len=len(analyzed_text),
+                        current_char_len=len(current),
+                        revision_id=revision_id,
+                        run_id=run_id,
+                    )
+                advice = run_quick_coach(
+                    bundle,
+                    focus,
+                    llm=qc_llm,
+                    current_revision_text=current,
+                    short_story_single_chapter=short_story_single_chapter,
+                )
+            else:
+                advice = run_quick_coach(
+                    bundle,
+                    focus,
+                    llm=qc_llm,
+                    short_story_single_chapter=short_story_single_chapter,
+                )
+
+            return QuickCoachResponse(
+                success=True,
+                advice=advice,
+                run_id=run_id,
+                revision_id=revision_id,
+            )
+        except Exception as e:
+            return QuickCoachResponse(success=False, error=str(e), revision_id=revision_id)
 
     def chat(
         self,
@@ -241,10 +446,11 @@ class NarrativeAnalysisService:
                 )
             from narrative_dag.nodes.interaction import run_judge_explain, run_judge_reconsider
 
+            chat_llm = build_run_llm_bundle(resolve_run_llm_provider(request.provider)).llm_chat
             chat_state = {
                 "context_bundle": bundle,
                 "user_message": request.user_message,
-                "_llm": llm_runtime.get_llm(),
+                "_llm": chat_llm,
             }
             if request.mode == "explain":
                 out = run_judge_explain(chat_state)

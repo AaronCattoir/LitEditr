@@ -21,6 +21,23 @@
 
 ---
 
+## LLM runtime: `RunLLMBundle` and per-run provider
+
+- **`RunLLMBundle`** (`src/narrative_dag/llm.py`) — dataclass holding per-stage chat clients for one beta provider (`openai` or `gemini`): `llm`, `llm_detector`, `llm_judge`, `llm_quick_coach`, `llm_chat`. Built via `build_run_llm_bundle(provider)`.
+- **Env default** — `LLM_PROVIDER` (and related `DEFAULT_LLM_PROVIDER_*` in `config.py`) selects the default backend; `resolve_run_llm_provider(requested)` maps API `provider` fields and coerces legacy `vertex` to `gemini` for bundles.
+- **Per-request override** — Analyze / quick-coach / chat payloads may include `provider` when the service supports it; effective model IDs come from env (`OPENAI_*`, `GEMINI_*`) and stage-specific fast/pro routing inside `get_llm(...)`.
+- **Public introspection** — `GET /v1/runtime/providers` returns configured flags and default model names (no secrets).
+
+---
+
+## HTTP API: static SPA and Docker
+
+- **`EDITR_STATIC_DIR`** — When set to a directory containing `index.html`, FastAPI mounts static files **last** so `GET /health`, `/v1/*`, and WebSockets are unchanged; `StaticFiles(..., html=True)` enables SPA fallback for client routes.
+- **Docker** — Root `Dockerfile`: Node stage builds `Editr-FrontEnd/dist`, Python stage `pip install .[api,mcp]`, copies `dist` → `/app/static`, sets `EDITR_STATIC_DIR` and `EDITR_DB_PATH`, runs `uvicorn narrative_dag.api.app:app` on `0.0.0.0:8000`.
+- **MCP in containers** — `editr-mcp` is stdio-based; run with `docker run -i ... editr editr-mcp` or `docker exec -i <container> editr-mcp` so the client owns stdin/stdout.
+
+---
+
 ## Per-chunk pipeline (compiled graph order)
 
 | Order | Graph node name   | Function                     | Module                      |
@@ -70,3 +87,4 @@ _Add a dated bullet when you change the DAG, node I/O, or orchestration._
 
 - **2026-03-23** — Initial context file. Documented split between `build_chunk_pipeline_graph()` (compiled per-chunk DAG) and `run_analysis()` (full imperative orchestration with matching per-chunk loop). Noted absence of a compiled LangGraph for chat; interaction nodes are service-driven.
 - **2026-03-23** — Persistent `EDITR_DB_PATH`, SCD2 `document_revisions` / `chunk_versions`, star-style `analytic_facts`, revision events, async jobs, FastAPI (`narrative_dag.api.app`), MCP (`mcp_server.py`), evidence spans + `evidence_fill`, `run_analysis(..., only_chunk_ids=...)` for incremental reruns, `build_incremental_chunk_graph()` alias.
+- **2026-03-30** — Documented `RunLLMBundle`, env/API provider resolution, optional `EDITR_STATIC_DIR` SPA mount (after API routes), root multi-stage Docker image, and MCP stdio via `docker run -i` / `docker exec -i`.

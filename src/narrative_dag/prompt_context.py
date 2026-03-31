@@ -84,6 +84,12 @@ def format_genre_context(genre: GenreIntention | None) -> str:
         parts.append("Tone descriptors: " + ", ".join(genre.tone_descriptors))
     if genre.reference_authors:
         parts.append("Reference authors: " + ", ".join(genre.reference_authors))
+    if getattr(genre, "short_story_single_chapter", False):
+        parts.append(
+            "Work shape: SHORT STORY (single chapter / stand-alone). "
+            "Do not penalize the text for lacking multi-chapter arc setup; "
+            "judge completeness, payoff, and craft within this one piece."
+        )
     return "\n".join(parts)
 
 

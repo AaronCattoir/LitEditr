@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from narrative_dag.prompt_context import format_prompt_context
-from narrative_dag.prompts.editorial_policy import editorial_policy_block, stage_role_block
+from narrative_dag.prompts.editorial_policy import (
+    editorial_policy_block,
+    evaluation_gate_block,
+    stage_role_block,
+    stop_condition_judge_block,
+)
 from narrative_dag.schemas import PromptContext
 
 
@@ -27,6 +32,9 @@ def editor_judgment_prompt(ctx: PromptContext, detector_snapshot: str, critic: s
                 "structural issues start at severity 2",
             ],
         )
+        + "\n"
+        + evaluation_gate_block()
+        + "\n"
         + editorial_policy_block()
         + "\nDetector findings:\n"
         + detector_snapshot
@@ -36,6 +44,8 @@ def editor_judgment_prompt(ctx: PromptContext, detector_snapshot: str, critic: s
         + defense
         + "\n\n"
         + format_prompt_context(ctx)
+        + "\n\n"
+        + stop_condition_judge_block()
     )
 
 

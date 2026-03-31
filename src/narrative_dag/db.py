@@ -13,7 +13,7 @@ def get_connection(db_path: str) -> sqlite3.Connection:
     """Return a connection to the SQLite database; creates file if needed."""
     if db_path != ":memory:":
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA foreign_keys = ON")
@@ -302,6 +302,8 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             FOREIGN KEY (revision_id) REFERENCES document_revisions(revision_id)
         )
     """)
+    add_column_if_missing(conn, "user_bookmarks", "run_id", "TEXT")
+    add_column_if_missing(conn, "user_bookmarks", "metadata_json", "TEXT DEFAULT '{}'")
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS async_jobs (
@@ -319,6 +321,24 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         )
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_async_jobs_status ON async_jobs(status)")
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_async_jobs_rev_kind_status "
+        "ON async_jobs(revision_id, kind, status)"
+    )
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS document_chapters (
+            chapter_id TEXT PRIMARY KEY,
+            document_id TEXT NOT NULL,
+            title TEXT NOT NULL DEFAULT '',
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (document_id) REFERENCES documents(document_id)
+        )
+    """)
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_document_chapters_doc ON document_chapters(document_id, sort_order)"
+    )
 
     conn.commit()
 

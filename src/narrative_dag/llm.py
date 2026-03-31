@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
+import time
 import warnings
-from typing import Any, TypeVar
+from dataclasses import dataclass
+from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel
 
@@ -14,6 +17,12 @@ from narrative_dag.config import (
     DEFAULT_GEMINI_MODEL,
     DEFAULT_GEMINI_PRO_MODEL,
     DEFAULT_LLM_PROVIDER,
+    DEFAULT_LLM_PROVIDER_CHAT,
+    DEFAULT_LLM_PROVIDER_CONFLICT,
+    DEFAULT_LLM_PROVIDER_DEFAULT_STAGE,
+    DEFAULT_LLM_PROVIDER_DETECTOR,
+    DEFAULT_LLM_PROVIDER_JUDGMENT,
+    DEFAULT_LLM_PROVIDER_QUICK_COACH,
     DEFAULT_LLM_TEMPERATURE,
     DEFAULT_OPENAI_FAST_MODEL,
     DEFAULT_OPENAI_MODEL,
@@ -24,6 +33,99 @@ from narrative_dag.config import (
 )
 
 TModel = TypeVar("TModel", bound=BaseModel)
+
+BetaLLMProvider = Literal["openai", "gemini"]
+BETA_LLM_PROVIDERS: frozenset[str] = frozenset({"openai", "gemini"})
+
+
+@dataclass
+class RunLLMBundle:
+    """Per-run chat clients: one provider, stage-appropriate models (detector/judgment tiers)."""
+
+    provider: str
+    llm: Any
+    llm_detector: Any
+    llm_judge: Any
+    llm_quick_coach: Any
+    llm_chat: Any
+
+
+def is_openai_configured() -> bool:
+    return bool(os.getenv("OPENAI_API_KEY", "").strip())
+
+
+def is_gemini_configured() -> bool:
+    return bool(os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip())
+
+
+def is_beta_llm_provider_configured(provider: str) -> bool:
+    p = provider.strip().lower()
+    if p == "openai":
+        return is_openai_configured()
+    if p == "gemini":
+        return is_gemini_configured()
+    return False
+
+
+def default_beta_llm_provider() -> str:
+    """Effective default for the beta (openai/gemini) path from env."""
+    return resolve_run_llm_provider(None)
+
+
+def resolve_run_llm_provider(requested: str | None) -> str:
+    """Map API/config to a beta provider. Vertex (or unknown env default) coerces to gemini for bundles."""
+    if requested:
+        r = requested.strip().lower()
+        if r in BETA_LLM_PROVIDERS:
+            return r
+    d = DEFAULT_LLM_PROVIDER.strip().lower()
+    if d in BETA_LLM_PROVIDERS:
+        return d
+    if d == "vertex":
+        return "gemini"
+    return "gemini"
+
+
+def build_run_llm_bundle(provider: str) -> RunLLMBundle:
+    """Construct per-run clients for the beta path (openai or gemini only)."""
+    p = provider.strip().lower()
+    if p not in BETA_LLM_PROVIDERS:
+        raise ValueError(f"Unsupported beta LLM provider '{provider}'. Use one of: {sorted(BETA_LLM_PROVIDERS)}.")
+    return RunLLMBundle(
+        provider=p,
+        llm=get_llm(provider=p, stage=None),
+        llm_detector=get_llm(provider=p, stage="detector"),
+        llm_judge=get_llm(provider=p, stage="judgment"),
+        llm_quick_coach=get_llm(provider=p, stage="quick_coach"),
+        llm_chat=get_llm(provider=p, stage="chat"),
+    )
+
+
+def runtime_providers_public_view() -> dict[str, Any]:
+    """Safe for GET /v1/runtime/providers: no secrets, only ids, flags, and resolved default model names."""
+    return {
+        "default_provider": default_beta_llm_provider(),
+        "providers": [
+            {
+                "id": "gemini",
+                "configured": is_gemini_configured(),
+                "models": {
+                    "default": DEFAULT_GEMINI_MODEL,
+                    "fast": DEFAULT_GEMINI_FAST_MODEL,
+                    "pro": DEFAULT_GEMINI_PRO_MODEL,
+                },
+            },
+            {
+                "id": "openai",
+                "configured": is_openai_configured(),
+                "models": {
+                    "default": DEFAULT_OPENAI_MODEL,
+                    "fast": DEFAULT_OPENAI_FAST_MODEL,
+                    "pro": DEFAULT_OPENAI_PRO_MODEL,
+                },
+            },
+        ],
+    }
 
 # Python 3.14 currently triggers noisy third-party warnings from legacy
 # pydantic-v1 compatibility layers; hide these so real runtime errors stand out.
@@ -106,6 +208,21 @@ def _resolve_stage_model(provider: str, stage: str | None) -> str | None:
     return None
 
 
+def _resolve_stage_provider(stage: str | None) -> str:
+    stage_key = (stage or "").strip().lower()
+    if stage_key == "detector":
+        return DEFAULT_LLM_PROVIDER_DETECTOR
+    if stage_key == "judgment":
+        return DEFAULT_LLM_PROVIDER_JUDGMENT
+    if stage_key == "conflict":
+        return DEFAULT_LLM_PROVIDER_CONFLICT
+    if stage_key == "quick_coach":
+        return DEFAULT_LLM_PROVIDER_QUICK_COACH
+    if stage_key == "chat":
+        return DEFAULT_LLM_PROVIDER_CHAT
+    return DEFAULT_LLM_PROVIDER_DEFAULT_STAGE or DEFAULT_LLM_PROVIDER
+
+
 def get_llm(
     provider: str | None = None,
     model: str | None = None,
@@ -113,7 +230,7 @@ def get_llm(
     stage: str | None = None,
 ) -> Any:
     """Return a chat model instance for the configured provider."""
-    selected_provider = (provider or DEFAULT_LLM_PROVIDER).strip().lower()
+    selected_provider = (provider or _resolve_stage_provider(stage)).strip().lower()
     selected_temperature = DEFAULT_LLM_TEMPERATURE if temperature is None else temperature
 
     resolved_model = model or _resolve_stage_model(selected_provider, stage)
@@ -167,7 +284,67 @@ def get_llm(
     )
 
 
-def structured_invoke(llm: Any, messages: list[Any], schema: type[TModel]) -> TModel:
+def structured_invoke(
+    llm: Any,
+    messages: list[Any],
+    schema: type[TModel],
+    trace_label: str | None = None,
+) -> TModel:
     """Invoke LLM with structured output mapped to a Pydantic schema."""
-    return llm.with_structured_output(schema).invoke(messages)
+    if trace_label:
+        model_name = (
+            getattr(llm, "model_name", None)
+            or getattr(llm, "model", None)
+            or getattr(llm, "model_id", None)
+            or "?"
+        )
+        retries = getattr(llm, "max_retries", "?")
+        print(
+            f"       llm[{trace_label}] invoke start model={model_name} max_retries={retries}",
+            file=sys.stderr,
+            flush=True,
+        )
+    t0 = time.time()
+    try:
+        from langchain_openai import ChatOpenAI
+
+        if isinstance(llm, ChatOpenAI):
+            # Avoid OpenAI "json_schema" strict mode (requires additionalProperties:false
+            # everywhere); function calling is more tolerant of nested models.
+            try:
+                out = llm.with_structured_output(schema, method="function_calling").invoke(messages)
+            except Exception as e:
+                if trace_label:
+                    print(
+                        f"       llm[{trace_label}] invoke failed after {time.time()-t0:.1f}s ({type(e).__name__}: {e})",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                raise
+            if trace_label:
+                print(
+                    f"       llm[{trace_label}] invoke ok {time.time()-t0:.1f}s",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            return out
+    except ImportError:
+        pass
+    try:
+        out = llm.with_structured_output(schema).invoke(messages)
+    except Exception as e:
+        if trace_label:
+            print(
+                f"       llm[{trace_label}] invoke failed after {time.time()-t0:.1f}s ({type(e).__name__}: {e})",
+                file=sys.stderr,
+                flush=True,
+            )
+        raise
+    if trace_label:
+        print(
+            f"       llm[{trace_label}] invoke ok {time.time()-t0:.1f}s",
+            file=sys.stderr,
+            flush=True,
+        )
+    return out
 

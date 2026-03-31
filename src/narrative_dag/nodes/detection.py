@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+import time
 from typing import Any
 
 from langchain_core.messages import HumanMessage
@@ -47,52 +49,93 @@ def _detector_prompt(state: dict[str, Any], detector_name: str) -> str | None:
     )
 
 
-def drift_detector(state: dict[str, Any]) -> dict[str, Any]:
-    prompt = _detector_prompt(state, "drift")
+def _log_detector(state: dict[str, Any], detector_name: str, msg: str) -> None:
+    chunk_id = state.get("current_chunk_id") or "?"
+    print(f"       detectors[{detector_name}] chunk={chunk_id} {msg}", file=sys.stderr, flush=True)
+
+
+def _run_detector(
+    state: dict[str, Any],
+    *,
+    detector_name: str,
+    result_key: str,
+    default_result: Any,
+    schema: Any,
+) -> dict[str, Any]:
+    prompt = _detector_prompt(state, detector_name)
     if not prompt:
-        return {"drift_result": DriftResult()}
-    result = structured_invoke(_state_llm(state), [HumanMessage(content=prompt)], DriftResult)
-    return {"drift_result": result}
+        _log_detector(state, detector_name, "skipped (no prompt context)")
+        return {result_key: default_result}
+    _log_detector(state, detector_name, "start")
+    t0 = time.time()
+    result = structured_invoke(
+        _state_llm(state),
+        [HumanMessage(content=prompt)],
+        schema,
+        trace_label=f"detector:{detector_name}",
+    )
+    _log_detector(state, detector_name, f"done {time.time()-t0:.1f}s")
+    return {result_key: result}
+
+
+def drift_detector(state: dict[str, Any]) -> dict[str, Any]:
+    return _run_detector(
+        state,
+        detector_name="drift",
+        result_key="drift_result",
+        default_result=DriftResult(),
+        schema=DriftResult,
+    )
 
 
 def cliche_detector(state: dict[str, Any]) -> dict[str, Any]:
-    prompt = _detector_prompt(state, "cliche")
-    if not prompt:
-        return {"cliche_result": ClicheResult()}
-    result = structured_invoke(_state_llm(state), [HumanMessage(content=prompt)], ClicheResult)
-    return {"cliche_result": result}
+    return _run_detector(
+        state,
+        detector_name="cliche",
+        result_key="cliche_result",
+        default_result=ClicheResult(),
+        schema=ClicheResult,
+    )
 
 
 def vagueness_detector(state: dict[str, Any]) -> dict[str, Any]:
-    prompt = _detector_prompt(state, "vagueness")
-    if not prompt:
-        return {"vagueness_result": VaguenessResult()}
-    result = structured_invoke(_state_llm(state), [HumanMessage(content=prompt)], VaguenessResult)
-    return {"vagueness_result": result}
+    return _run_detector(
+        state,
+        detector_name="vagueness",
+        result_key="vagueness_result",
+        default_result=VaguenessResult(),
+        schema=VaguenessResult,
+    )
 
 
 def emotional_honesty_detector(state: dict[str, Any]) -> dict[str, Any]:
-    prompt = _detector_prompt(state, "emotional_honesty")
-    if not prompt:
-        return {"emotional_honesty_result": EmotionalHonestyResult()}
-    result = structured_invoke(_state_llm(state), [HumanMessage(content=prompt)], EmotionalHonestyResult)
-    return {"emotional_honesty_result": result}
+    return _run_detector(
+        state,
+        detector_name="emotional_honesty",
+        result_key="emotional_honesty_result",
+        default_result=EmotionalHonestyResult(),
+        schema=EmotionalHonestyResult,
+    )
 
 
 def redundancy_detector(state: dict[str, Any]) -> dict[str, Any]:
-    prompt = _detector_prompt(state, "redundancy")
-    if not prompt:
-        return {"redundancy_result": RedundancyResult()}
-    result = structured_invoke(_state_llm(state), [HumanMessage(content=prompt)], RedundancyResult)
-    return {"redundancy_result": result}
+    return _run_detector(
+        state,
+        detector_name="redundancy",
+        result_key="redundancy_result",
+        default_result=RedundancyResult(),
+        schema=RedundancyResult,
+    )
 
 
 def risk_detector(state: dict[str, Any]) -> dict[str, Any]:
-    prompt = _detector_prompt(state, "risk")
-    if not prompt:
-        return {"risk_result": RiskResult()}
-    result = structured_invoke(_state_llm(state), [HumanMessage(content=prompt)], RiskResult)
-    return {"risk_result": result}
+    return _run_detector(
+        state,
+        detector_name="risk",
+        result_key="risk_result",
+        default_result=RiskResult(),
+        schema=RiskResult,
+    )
 
 
 def run_all_detectors(state: dict[str, Any]) -> dict[str, Any]:

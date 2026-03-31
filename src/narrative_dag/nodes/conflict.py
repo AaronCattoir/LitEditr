@@ -16,7 +16,7 @@ from narrative_dag.schemas import CriticResult, DefenseResult
 
 def _state_llm(state: dict[str, Any]) -> Any:
     llm = state.get("_llm_judge") or state.get("_llm")
-    return llm if llm is not None else llm_runtime.get_llm()
+    return llm if llm is not None else llm_runtime.get_llm(stage="conflict")
 
 
 def _detector_snapshot(state: dict[str, Any]) -> str:

@@ -99,3 +99,18 @@ class JobStore:
             "created_at": row[9],
             "updated_at": row[10],
         }
+
+    def find_active_analyze_job_for_revision(self, revision_id: str) -> str | None:
+        """Return job_id of a queued or running analyze job for this revision, if any."""
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT job_id FROM async_jobs
+            WHERE kind = 'analyze' AND revision_id = ? AND status IN ('queued', 'running')
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (revision_id,),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None

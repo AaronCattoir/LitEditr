@@ -19,6 +19,11 @@ class DocumentStore:
     def __init__(self, conn: Any) -> None:
         self._conn = conn
 
+    def document_exists(self, document_id: str) -> bool:
+        cur = self._conn.cursor()
+        cur.execute("SELECT 1 FROM documents WHERE document_id = ?", (document_id,))
+        return cur.fetchone() is not None
+
     def create_document(
         self,
         title: str | None = None,
@@ -180,6 +185,29 @@ class DocumentStore:
         )
         return {row[1]: row[0] for row in cur.fetchall()}
 
+    def get_revision_chunk_text(self, revision_id: str, chunk_business_id: str) -> str | None:
+        """Slice current revision full_text using chunk_versions span; None if missing."""
+        rev = self.get_revision(revision_id)
+        if not rev:
+            return None
+        full = rev.get("full_text") or ""
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT start_char, end_char FROM chunk_versions
+            WHERE revision_id = ? AND chunk_business_id = ? AND is_current = 1
+            LIMIT 1
+            """,
+            (revision_id, chunk_business_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        start, end = int(row[0]), int(row[1])
+        if start < 0 or end < start or end > len(full):
+            return None
+        return full[start:end]
+
     def record_revision_event(
         self,
         document_id: str,
@@ -213,17 +241,203 @@ class DocumentStore:
         self._conn.commit()
         return int(cur.lastrowid)
 
-    def add_bookmark(self, document_id: str, label: str, revision_id: str) -> int:
+    def add_bookmark(
+        self,
+        document_id: str,
+        label: str,
+        revision_id: str,
+        *,
+        run_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> int:
         cur = self._conn.cursor()
         cur.execute(
             """
-            INSERT INTO user_bookmarks (document_id, label, revision_id, created_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO user_bookmarks (document_id, label, revision_id, run_id, metadata_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (document_id, label, revision_id, _now()),
+            (
+                document_id,
+                label,
+                revision_id,
+                run_id,
+                json.dumps(metadata or {}),
+                _now(),
+            ),
         )
         self._conn.commit()
         return int(cur.lastrowid)
+
+    def list_bookmarks(self, document_id: str) -> list[dict[str, Any]]:
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT id, document_id, label, revision_id, run_id, metadata_json, created_at
+            FROM user_bookmarks WHERE document_id = ? ORDER BY created_at DESC
+            """,
+            (document_id,),
+        )
+        out = []
+        for row in cur.fetchall():
+            meta_raw = row[5]
+            try:
+                meta = json.loads(meta_raw) if meta_raw else {}
+            except json.JSONDecodeError:
+                meta = {}
+            out.append(
+                {
+                    "id": row[0],
+                    "document_id": row[1],
+                    "label": row[2],
+                    "revision_id": row[3],
+                    "run_id": row[4],
+                    "metadata": meta,
+                    "created_at": row[6],
+                }
+            )
+        return out
+
+    def get_bookmark(self, bookmark_id: int) -> dict[str, Any] | None:
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT id, document_id, label, revision_id, run_id, metadata_json, created_at
+            FROM user_bookmarks WHERE id = ?
+            """,
+            (bookmark_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        meta_raw = row[5]
+        try:
+            meta = json.loads(meta_raw) if meta_raw else {}
+        except json.JSONDecodeError:
+            meta = {}
+        return {
+            "id": row[0],
+            "document_id": row[1],
+            "label": row[2],
+            "revision_id": row[3],
+            "run_id": row[4],
+            "metadata": meta,
+            "created_at": row[6],
+        }
+
+    def delete_bookmark(self, bookmark_id: int) -> bool:
+        cur = self._conn.cursor()
+        cur.execute("DELETE FROM user_bookmarks WHERE id = ?", (bookmark_id,))
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def get_current_revision_for_document(self, document_id: str) -> dict[str, Any] | None:
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT revision_id, document_id, full_text, text_hash, created_at, is_current
+            FROM document_revisions WHERE document_id = ? AND is_current = 1 LIMIT 1
+            """,
+            (document_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "revision_id": row[0],
+            "document_id": row[1],
+            "full_text": row[2],
+            "text_hash": row[3],
+            "created_at": row[4],
+            "is_current": bool(row[5]),
+        }
+
+    def list_document_chapters(self, document_id: str) -> list[dict[str, Any]]:
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT chapter_id, document_id, title, sort_order, created_at
+            FROM document_chapters WHERE document_id = ?
+            ORDER BY sort_order ASC, created_at ASC
+            """,
+            (document_id,),
+        )
+        return [
+            {
+                "chapter_id": r[0],
+                "document_id": r[1],
+                "title": r[2],
+                "sort_order": r[3],
+                "created_at": r[4],
+            }
+            for r in cur.fetchall()
+        ]
+
+    def create_document_chapter(
+        self,
+        document_id: str,
+        title: str,
+        *,
+        sort_order: int | None = None,
+    ) -> str:
+        chapter_id = str(uuid.uuid4())
+        cur = self._conn.cursor()
+        if sort_order is None:
+            cur.execute(
+                "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM document_chapters WHERE document_id = ?",
+                (document_id,),
+            )
+            sort_order = int(cur.fetchone()[0])
+        cur.execute(
+            """
+            INSERT INTO document_chapters (chapter_id, document_id, title, sort_order, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (chapter_id, document_id, title or "", sort_order, _now()),
+        )
+        self._conn.commit()
+        return chapter_id
+
+    def update_document_chapter(
+        self,
+        chapter_id: str,
+        *,
+        title: str | None = None,
+        sort_order: int | None = None,
+    ) -> bool:
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT chapter_id FROM document_chapters WHERE chapter_id = ?",
+            (chapter_id,),
+        )
+        if not cur.fetchone():
+            return False
+        if title is not None:
+            cur.execute(
+                "UPDATE document_chapters SET title = ? WHERE chapter_id = ?",
+                (title, chapter_id),
+            )
+        if sort_order is not None:
+            cur.execute(
+                "UPDATE document_chapters SET sort_order = ? WHERE chapter_id = ?",
+                (sort_order, chapter_id),
+            )
+        self._conn.commit()
+        return True
+
+    def delete_document_chapter(self, chapter_id: str) -> bool:
+        cur = self._conn.cursor()
+        cur.execute("DELETE FROM document_chapters WHERE chapter_id = ?", (chapter_id,))
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def get_document_id_for_chapter(self, chapter_id: str) -> str | None:
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT document_id FROM document_chapters WHERE chapter_id = ?",
+            (chapter_id,),
+        )
+        row = cur.fetchone()
+        return str(row[0]) if row else None
 
     def save_analytic_fact(
         self,
