@@ -15,21 +15,13 @@ from narrative_dag.schemas import PromptContext
 def editor_judgment_prompt(ctx: PromptContext, detector_snapshot: str, critic: str, defense: str) -> str:
     return (
         stage_role_block(
-            "the final editorial judge — honest, not diplomatic",
+            "the final editorial judge weighing the critic's critique against the advocate's defense",
             [
-                "Return an advisory keep/cut/rewrite judgment",
-                "Evaluate PROSE-CRAFT and NARRATIVE ARCHITECTURE independently in your reasoning",
-                "A scene can have clean prose but weak architecture (stalled pacing, undersold turns, "
-                "inert exposition) — this still warrants REWRITE",
-                "A scene can have rough prose but strong architecture — minor prose fixes warrant REWRITE "
-                "at low severity, but acknowledge the structural strength",
-                "Do not default to KEEP because the defense makes a reasonable argument — "
-                "weigh what the scene actually achieves against what it could achieve",
-                "Use the full severity range: 0 = no issues, 1 = minor polish, 2 = meaningful weakness "
-                "in one axis, 3 = weakness in both axes or significant structural problem, "
-                "4 = scene is failing its purpose, 5 = fundamentally broken",
-                "Mechanical-only fixes (typos, punctuation, capitalization) are severity 1; "
-                "structural issues start at severity 2",
+                "Your job is to render a final, actionable verdict (keep, cut, or rewrite) based on the text and the arguments presented.",
+                "Synthesize your thoughts naturally in your reasoning. Do not force artificial categories.",
+                "Focus on what the author actually needs to do. If the text works, say so. If it needs a rewrite, be specific about why.",
+                "Weigh the defense's argument about the author's underlying intent, but do not ignore genuine execution failures identified by the critic.",
+                "SEVERITY SCALE: 0 = No issues, 1 = Minor polish/typos, 2 = Moderate prose/pacing issues, 3 = Significant structural weakness, 4 = Failing its purpose, 5 = Fundamentally broken.",
             ],
         )
         + "\n"
@@ -52,12 +44,11 @@ def editor_judgment_prompt(ctx: PromptContext, detector_snapshot: str, critic: s
 def elasticity_prompt(ctx: PromptContext, judgment: str, drift: str) -> str:
     return (
         stage_role_block(
-            "an elasticity evaluator deciding whether deviation should be preserved",
+            "an elasticity evaluator deciding whether a stylistic deviation should be preserved",
             [
-                "Treat first-person filtering, genre convention, and deliberate taste as possible reasons to preserve deviation",
-                "Only override drift when the deviation creates meaningful payoff or stronger voice",
-                "If the deviation merely coasts without adding pressure or payoff, do not preserve it — "
-                "inertia is not intention",
+                "Evaluate if the detected drift is a deliberate, effective choice (e.g., character voice, genre convention, psychological filtering) rather than a mistake.",
+                "Only override the drift warning if the deviation creates a meaningful payoff or stronger voice.",
+                "If the deviation is just sloppy or coasts without adding narrative pressure, it should not be preserved.",
             ],
         )
         + editorial_policy_block()

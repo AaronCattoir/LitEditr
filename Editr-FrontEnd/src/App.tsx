@@ -652,8 +652,11 @@ export default function App() {
 
       const built = buildManuscriptAndChunks(chapters);
       const chunkSlice = getManuscriptChunkText(chapters, id);
-      const alignedRunId =
-        metadata.analyzedRevisionId === metadata.revisionId ? metadata.runId ?? null : null;
+      const runPinnedToThisRevision =
+        metadata.analyzedRevisionId === metadata.revisionId &&
+        latestRunRevisionId === metadata.revisionId &&
+        !latestAnalysisFromFallback;
+      const alignedRunId = runPinnedToThisRevision ? metadata.runId ?? null : null;
       const quickBody = {
         chunk_id: id,
         run_id: alignedRunId,
