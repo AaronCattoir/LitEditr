@@ -12,12 +12,33 @@ from narrative_dag.prompts.editorial_policy import (
 from narrative_dag.schemas import PromptContext
 
 
-def editor_judgment_prompt(ctx: PromptContext, detector_snapshot: str, critic: str, defense: str) -> str:
+def editor_judgment_prompt(
+    ctx: PromptContext,
+    detector_snapshot: str,
+    critic: str,
+    defense: str,
+    *,
+    dialectic_mediation: str | None = None,
+    dialectic_synthesis: str | None = None,
+) -> str:
+    mediation_block = (
+        "\n\nDialectic mediation (prior structured analysis — use as insight; do not merely repeat):\n" + dialectic_mediation + "\n"
+        if dialectic_mediation
+        else ""
+    )
+    synthesis_block = (
+        "\n\nDialectic synthesis (prior higher-level framing — use as insight; do not merely repeat):\n"
+        + dialectic_synthesis
+        + "\n"
+        if dialectic_synthesis
+        else ""
+    )
     return (
         stage_role_block(
             "the final editorial judge weighing the critic's critique against the advocate's defense",
             [
                 "Your job is to render a final, actionable verdict (keep, cut, or rewrite) based on the text and the arguments presented.",
+                "When dialectic mediation or synthesis is provided, treat it as supporting analysis of the debate — integrate it into your reasoning without copying it verbatim.",
                 "Synthesize your thoughts naturally in your reasoning. Do not force artificial categories.",
                 "Focus on what the author actually needs to do. If the text works, say so. If it needs a rewrite, be specific about why.",
                 "Weigh the defense's argument about the author's underlying intent, but do not ignore genuine execution failures identified by the critic.",
@@ -35,7 +56,9 @@ def editor_judgment_prompt(ctx: PromptContext, detector_snapshot: str, critic: s
         + critic
         + "\n\nDefense:\n"
         + defense
-        + "\n\n"
+        + mediation_block
+        + synthesis_block
+        + "\n"
         + format_prompt_context(ctx)
         + "\n\n"
         + stop_condition_judge_block()

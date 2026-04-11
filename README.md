@@ -55,6 +55,10 @@ The beta runtime uses **openai** or **gemini** only. Set one primary toggle and 
 
 Copy `.env.example` to `.env` and fill keys locally. Optional: `EDITR_STATIC_DIR` pointing at a `dist` folder to serve the SPA alongside the API.
 
+### Dialectic depth (internal)
+
+`EDITR_DIALECTIC_DEPTH` controls optional LLM steps *before* the final per-chunk judge: `off` (default), `review` (mediator only), or `deep` (mediator + dialectic synthesis). This increases latency and token use; it is not exposed in the web UI. API clients may override per request with `dialectic_depth` on `AnalyzeDocumentRequest`.
+
 ## MCP in Docker (optional)
 
 The image installs `.[api,mcp]`. The MCP server speaks stdio and is intended for tools (e.g. Cursor), not HTTP:

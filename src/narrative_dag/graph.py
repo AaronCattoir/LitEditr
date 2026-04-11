@@ -19,6 +19,8 @@ from narrative_dag.nodes.representation import (
 )
 from narrative_dag.nodes.detection import run_all_detectors
 from narrative_dag.nodes.conflict import critic_agent, defense_agent
+from narrative_dag.config import DialecticDepth, get_default_dialectic_depth
+from narrative_dag.nodes.dialectic import dialectic_mediator, dialectic_synthesizer
 from narrative_dag.nodes.judgment import (
     editor_judge,
     elasticity_evaluator,
@@ -58,6 +60,7 @@ def run_analysis(
     client_chunks: list[Chunk] | None = None,
     seed_document_state: DocumentState | None = None,
     bundle: RunLLMBundle | None = None,
+    dialectic_depth: DialecticDepth | None = None,
 ) -> tuple[dict[str, Any], list[ChunkJudgmentEntry]]:
     """Run full analysis: chunker (or pre-built client chunks), then per-chunk pipeline, then report.
     on_chunk_done(run_id, chunk_id, position, artifact_dict, judgment, elasticity) called after each chunk.
@@ -102,6 +105,9 @@ def run_analysis(
         state["editorial_report"] = {"run_id": run_id, "chunk_judgments": [], "document_summary": "No chunks."}
         return state, []
     _log(f"[1/5] found {len(chunks)} chunks ({time.time()-t0:.1f}s)")
+
+    depth: DialecticDepth = dialectic_depth if dialectic_depth is not None else get_default_dialectic_depth()
+    _log(f"[dialectic] depth={depth}")
 
     # 2–3) Plot overview + character database in parallel (wall ~ max of two LLM calls).
     # character_map_builder reads plot_overview from state; workers start before plot merges, so
@@ -202,16 +208,38 @@ def run_analysis(
             st = {**st, **step_fn(st)}
             _log(f"       {step_name} {time.time()-step_t:.1f}s")
             
-        # Parallel judge and evidence synthesis
-        _log("       judge + evidence synthesis (parallel)...")
+        # Evidence synthesis + judge; optional dialectic mediator / synthesis before judge
         t_parallel = time.time()
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            fut_judge = pool.submit(editor_judge, st)
-            fut_synth = pool.submit(evidence_synthesizer, st)
-            judge_out = fut_judge.result()
-            synth_out = fut_synth.result()
-        st = {**st, **judge_out, **synth_out}
-        _log(f"       judge + synthesis wall {time.time()-t_parallel:.1f}s")
+        if depth == "off":
+            _log("       judge + evidence synthesis (parallel)...")
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                fut_judge = pool.submit(editor_judge, st)
+                fut_synth = pool.submit(evidence_synthesizer, st)
+                judge_out = fut_judge.result()
+                synth_out = fut_synth.result()
+            st = {**st, **judge_out, **synth_out}
+            _log(f"       judge + synthesis wall {time.time()-t_parallel:.1f}s")
+        elif depth == "review":
+            _log("       evidence synthesis + dialectic mediator (parallel), then judge...")
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                fut_synth = pool.submit(evidence_synthesizer, st)
+                fut_med = pool.submit(dialectic_mediator, st)
+                synth_out = fut_synth.result()
+                med_out = fut_med.result()
+            st = {**st, **synth_out, **med_out}
+            st = {**st, **editor_judge(st)}
+            _log(f"       mediator parallel + judge wall {time.time()-t_parallel:.1f}s")
+        else:
+            _log("       evidence synthesis + dialectic mediator (parallel), then dialectic synthesis, then judge...")
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                fut_synth = pool.submit(evidence_synthesizer, st)
+                fut_med = pool.submit(dialectic_mediator, st)
+                synth_out = fut_synth.result()
+                med_out = fut_med.result()
+            st = {**st, **synth_out, **med_out}
+            st = {**st, **dialectic_synthesizer(st)}
+            st = {**st, **editor_judge(st)}
+            _log(f"       deep dialectic + judge wall {time.time()-t_parallel:.1f}s")
         
         # Elasticity
         step_t = time.time()
@@ -259,6 +287,8 @@ def run_analysis(
                 "critic_result": _dump(st["critic_result"]) if st.get("critic_result") else None,
                 "defense_result": _dump(st["defense_result"]) if st.get("defense_result") else None,
                 "evidence_synthesis_result": _dump(st["evidence_synthesis_result"]) if st.get("evidence_synthesis_result") else None,
+                "dialectic_mediation": _dump(st["dialectic_mediation"]) if st.get("dialectic_mediation") else None,
+                "dialectic_synthesis": _dump(st["dialectic_synthesis"]) if st.get("dialectic_synthesis") else None,
                 "character_database": _dump(st["character_database"]) if st.get("character_database") else None,
                 "current_judgment": judgment.model_dump(),
             }

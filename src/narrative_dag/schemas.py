@@ -316,6 +316,55 @@ class DefenseResult(BaseModel):
     evidence_spans: list[EvidenceSpan] = Field(default_factory=list)
 
 
+# --- Dialectic (internal; feeds editor_judge; not in EditorialReport) ---
+
+
+class DialecticMediationResult(BaseModel):
+    """Impartial analysis of critic vs advocate before final judgment (Step 3)."""
+
+    strongest_points: str = Field(
+        default="",
+        description="Strongest points of the critic's argument and of the advocate's argument.",
+    )
+    contradictions: str = Field(
+        default="",
+        description="Where the two arguments directly contradict each other.",
+    )
+    assumptions_and_values: str = Field(
+        default="",
+        description="Underlying assumptions and values driving each position.",
+    )
+    limitations: str = Field(
+        default="",
+        description="Limitations of both perspectives.",
+    )
+    core_tension_summary: str = Field(
+        default="",
+        description="Clear structured summary of the core tension; do not yet deliver final editorial verdict.",
+    )
+
+
+class DialecticSynthesisResult(BaseModel):
+    """Higher-level integrated perspective after mediation (Step 4; deep depth only)."""
+
+    integrated_perspective: str = Field(
+        default="",
+        description="New framework that integrates valid insights; not a bland compromise.",
+    )
+    resolved_contradictions: str = Field(
+        default="",
+        description="How core contradictions between critic and advocate are addressed.",
+    )
+    transcendence_notes: str = Field(
+        default="",
+        description="How the synthesis transcends the original terms of the debate.",
+    )
+    higher_level_truth: str = Field(
+        default="",
+        description="What a higher-level understanding looks like that honors both sides while overcoming limitations.",
+    )
+
+
 # --- Judgment layer ---
 
 
@@ -380,6 +429,8 @@ class ContextBundle(BaseModel):
     detector_results: dict[str, Any] = Field(default_factory=dict)
     critic_result: CriticResult | None = None
     defense_result: DefenseResult | None = None
+    dialectic_mediation: DialecticMediationResult | None = None
+    dialectic_synthesis: DialecticSynthesisResult | None = None
     current_judgment: EditorJudgment | None = None
     genre_intention: GenreIntention | None = None
 

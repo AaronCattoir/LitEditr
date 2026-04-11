@@ -282,6 +282,7 @@ def build_analyze_payload_from_revision(
         "only_chunk_ids": body.get("only_chunk_ids"),
         "short_story_single_chapter": bool(body.get("short_story_single_chapter", False)),
         "provider": body.get("provider"),
+        "dialectic_depth": body.get("dialectic_depth"),
     }
 
 

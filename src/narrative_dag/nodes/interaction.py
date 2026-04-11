@@ -49,6 +49,10 @@ def _bundle_text(bundle: ContextBundle) -> str:
         + repr(bundle.critic_result.model_dump() if bundle.critic_result else None)
         + "\nDefense: "
         + repr(bundle.defense_result.model_dump() if bundle.defense_result else None)
+        + "\nDialectic mediation (if present): "
+        + repr(bundle.dialectic_mediation.model_dump() if bundle.dialectic_mediation else None)
+        + "\nDialectic synthesis (if present): "
+        + repr(bundle.dialectic_synthesis.model_dump() if bundle.dialectic_synthesis else None)
         + "\nCurrent judgment: "
         + repr(bundle.current_judgment.model_dump() if bundle.current_judgment else None)
     )

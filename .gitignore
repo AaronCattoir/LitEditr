@@ -24,6 +24,8 @@ env/
 *.sqlite
 *.sqlite3
 editr.sqlite
+editr.sqlite-wal
+editr.sqlite-shm
 
 # IDE / OS
 .idea/

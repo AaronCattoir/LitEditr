@@ -89,11 +89,17 @@ def editor_judge(state: dict[str, Any]) -> dict[str, Any]:
         return {"editor_judgment": EditorJudgment()}
     critic = state.get("critic_result")
     defense = state.get("defense_result")
+    dm = state.get("dialectic_mediation")
+    ds = state.get("dialectic_synthesis")
+    mediation_s = dm.model_dump_json() if dm is not None and hasattr(dm, "model_dump_json") else None
+    synthesis_s = ds.model_dump_json() if ds is not None and hasattr(ds, "model_dump_json") else None
     prompt = editor_judgment_prompt(
         prompt_ctx,
         _detector_snapshot(state),
         critic.model_dump_json() if hasattr(critic, "model_dump_json") else str(critic),
         defense.model_dump_json() if hasattr(defense, "model_dump_json") else str(defense),
+        dialectic_mediation=mediation_s,
+        dialectic_synthesis=synthesis_s,
     )
     result = structured_invoke(_state_llm(state), [HumanMessage(content=prompt)], EditorJudgment)
     result = fill_judgment_spans(state, result)

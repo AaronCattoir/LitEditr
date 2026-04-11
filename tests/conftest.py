@@ -72,6 +72,20 @@ class _StructuredInvoker:
                 "salvageability": "high",
                 "evidence_spans": [],
             },
+            "EvidenceSynthesisResult": {"spans": []},
+            "DialecticMediationResult": {
+                "strongest_points": "Critic: pacing. Advocate: voice.",
+                "contradictions": "They disagree on whether compression hurts impact.",
+                "assumptions_and_values": "Critic values clarity; advocate values atmosphere.",
+                "limitations": "Both under-specify evidence from the text.",
+                "core_tension_summary": "Pace vs immersion.",
+            },
+            "DialecticSynthesisResult": {
+                "integrated_perspective": "Tighten without flattening voice.",
+                "resolved_contradictions": "Compression can coexist with texture if beats land.",
+                "transcendence_notes": "Move from line-level vs scene-level to reader effect.",
+                "higher_level_truth": "Clarity serves the emotional beat, not vice versa.",
+            },
             "EditorJudgment": {
                 "decision": "rewrite",
                 "severity": 0.5,

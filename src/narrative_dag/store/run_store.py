@@ -12,6 +12,8 @@ from narrative_dag.schemas import (
     ContextWindow,
     CriticResult,
     DefenseResult,
+    DialecticMediationResult,
+    DialecticSynthesisResult,
     DocumentState,
     EditorJudgment,
     GenreIntention,
@@ -319,6 +321,15 @@ class RunStore:
         raw_defense = artifact.get("defense_result")
         defense_result = DefenseResult.model_validate(raw_defense) if isinstance(raw_defense, dict) else raw_defense
 
+        raw_dm = artifact.get("dialectic_mediation")
+        dialectic_mediation = (
+            DialecticMediationResult.model_validate(raw_dm) if isinstance(raw_dm, dict) else None
+        )
+        raw_ds = artifact.get("dialectic_synthesis")
+        dialectic_synthesis = (
+            DialecticSynthesisResult.model_validate(raw_ds) if isinstance(raw_ds, dict) else None
+        )
+
         return ContextBundle(
             target_chunk=target_chunk,
             context_window=context_window,
@@ -326,6 +337,8 @@ class RunStore:
             detector_results=artifact.get("detector_results", {}),
             critic_result=critic_result,
             defense_result=defense_result,
+            dialectic_mediation=dialectic_mediation,
+            dialectic_synthesis=dialectic_synthesis,
             current_judgment=current_judgment,
             genre_intention=genre,
         )

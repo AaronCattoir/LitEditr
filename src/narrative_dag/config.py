@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from dotenv import load_dotenv
+
+DialecticDepth = Literal["off", "review", "deep"]
 
 load_dotenv()
 
@@ -105,3 +107,11 @@ def get_genre_profile(genre: str) -> GenreProfile:
     """Return profile for genre; default if unknown."""
     key = genre.lower().replace(" ", "_").replace("-", "_")
     return GENRE_PROFILES.get(key, GenreProfile(genre=key))
+
+
+def get_default_dialectic_depth() -> DialecticDepth:
+    """Internal pipeline: extra mediator/synthesis LLM steps before editor_judge (latency vs depth)."""
+    raw = (os.getenv("EDITR_DIALECTIC_DEPTH", "off") or "off").strip().lower()
+    if raw in ("off", "review", "deep"):
+        return raw  # type: ignore[return-value]
+    return "off"

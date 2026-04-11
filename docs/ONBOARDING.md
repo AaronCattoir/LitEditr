@@ -28,6 +28,8 @@ The runtime checks keys before calling the model (see `is_openai_configured` / `
 
 See comments in `.env.example` for `OPENAI_MODEL`, `GEMINI_MODEL`, fast/pro tiers, `LLM_TEMPERATURE`, Quick Coach bounds, Inkblot memory, and related flags. Defaults are defined in `src/narrative_dag/config.py`.
 
+**Dialectic pipeline:** `EDITR_DIALECTIC_DEPTH` (`off` | `review` | `deep`, default `off`) adds optional mediator/synthesis LLM calls before the final judge for each chunk. Higher depth improves structured debate context at the cost of extra wall time and tokens. The web UI does not toggle this; API callers can also pass `dialectic_depth` on analyze requests.
+
 ## Paths: local development vs Docker
 
 - **Bare-metal / local Python**: `.env.example` sets `EDITR_DB_PATH=editr.sqlite` (file in the current working directory unless you override).

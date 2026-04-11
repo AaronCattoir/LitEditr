@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+DialecticDepthLiteral = Literal["off", "review", "deep"]
+
 from narrative_dag.schemas import EditorialReport, EditorJudgment, JudgmentVersion, QuickCoachAdvice
 
 
@@ -51,6 +53,10 @@ class AnalyzeDocumentRequest(BaseModel):
     provider: Literal["openai", "gemini"] | None = Field(
         default=None,
         description="LLM backend for this run (openai or gemini); defaults from server config",
+    )
+    dialectic_depth: DialecticDepthLiteral | None = Field(
+        default=None,
+        description="Optional: override EDITR_DIALECTIC_DEPTH (off | review | deep). Internal; not shown in UI.",
     )
 
     @model_validator(mode="after")

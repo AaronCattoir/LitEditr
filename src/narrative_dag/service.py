@@ -23,6 +23,7 @@ from narrative_dag.contracts import (
     StoryPersonaResponse,
 )
 from narrative_dag.chunk_spans import validate_and_build_chunks_from_spans
+from narrative_dag.config import get_default_dialectic_depth
 from narrative_dag.graph import run_analysis
 from narrative_dag.llm import build_run_llm_bundle, resolve_run_llm_provider
 from narrative_dag.nodes.ingestion import build_context_window
@@ -228,6 +229,7 @@ class NarrativeAnalysisService:
                 else None
             )
             llm_bundle = build_run_llm_bundle(resolve_run_llm_provider(request.provider))
+            dialectic_depth = request.dialectic_depth if request.dialectic_depth is not None else get_default_dialectic_depth()
             state, chunk_judgments = run_analysis(
                 raw_document=doc,
                 genre_intention=genre,
@@ -238,6 +240,7 @@ class NarrativeAnalysisService:
                 only_chunk_ids=only_ids,
                 seed_document_state=seed_ds,
                 bundle=llm_bundle,
+                dialectic_depth=dialectic_depth,
             )
 
             final_chunk_judgments = list(chunk_judgments)
@@ -533,6 +536,8 @@ class NarrativeAnalysisService:
                     detector_results=bundle.detector_results,
                     critic_result=bundle.critic_result,
                     defense_result=bundle.defense_result,
+                    dialectic_mediation=bundle.dialectic_mediation,
+                    dialectic_synthesis=bundle.dialectic_synthesis,
                     current_judgment=latest.judgment,
                     genre_intention=bundle.genre_intention,
                 )
