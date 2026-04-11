@@ -39,11 +39,20 @@ export interface ProjectMetadata {
   llmProvider?: BetaLlmProviderId;
 }
 
+/** Character offsets into full manuscript (Unicode code points); matches backend EvidenceSpan. */
+export interface EvidenceSpanPayload {
+  start_char: number;
+  end_char: number;
+  quote?: string;
+  label?: string;
+}
+
 /** Serialized critic layer (matches backend CriticResult). */
 export interface GraphCriticPayload {
   critique: string;
   failure_points?: string[];
   verdict?: string;
+  evidence_spans?: EvidenceSpanPayload[];
 }
 
 /** Serialized defense / advocate layer (matches backend DefenseResult). */
@@ -51,6 +60,7 @@ export interface GraphDefensePayload {
   defense: string;
   valid_points?: string[];
   salvageability?: string;
+  evidence_spans?: EvidenceSpanPayload[];
 }
 
 export interface GraphChunkJudgment {
@@ -61,6 +71,10 @@ export interface GraphChunkJudgment {
   reasoning?: string;
   critic?: GraphCriticPayload | null;
   defense?: GraphDefensePayload | null;
+  /** Editor judgment evidence spans (matches backend EditorJudgment.evidence_spans). */
+  judgment_evidence_spans?: EvidenceSpanPayload[];
+  /** Synthesized spans mapped to specific text with critic/advocate blurbs */
+  synthesis_spans?: SpanSynthesisPayload[];
   /** From story_wide.emotional_curve for this chunk_id (last entry wins). */
   emotionalRegister?: string;
   /** From story_wide.narrative_map for this chunk_id (last entry wins). */
@@ -131,6 +145,18 @@ export interface JobRecord {
   error: string | null;
 }
 
+export interface JobProgressResponse {
+  job_id: string;
+  status: string;
+  run_id: string | null;
+  revision_id: string | null;
+  document_id: string | null;
+  completed_chunks: number;
+  total_chunks: number | null;
+  report: EditorialReportPayload | null;
+  error: string | null;
+}
+
 export interface AnalyzeJobResult {
   run_id: string;
   document_id: string;
@@ -174,6 +200,18 @@ export interface EditorialReportPayload {
   genre_intention?: GenreIntentionPayload | null;
 }
 
+export interface SpanSynthesisPayload {
+  quote: string;
+  critic_blurb: string;
+  advocate_blurb: string;
+  start_char: number;
+  end_char: number;
+}
+
+export interface EvidenceSynthesisResultPayload {
+  spans: SpanSynthesisPayload[];
+}
+
 export interface ChunkJudgmentEntryPayload {
   chunk_id: string;
   position: number;
@@ -183,9 +221,11 @@ export interface ChunkJudgmentEntryPayload {
     guidance: string;
     core_issue: string;
     reasoning?: string;
+    evidence_spans?: EvidenceSpanPayload[];
   };
   critic_result?: GraphCriticPayload | null;
   defense_result?: GraphDefensePayload | null;
+  evidence_synthesis?: EvidenceSynthesisResultPayload | null;
 }
 
 export interface BookmarkRow {
@@ -202,6 +242,83 @@ export interface RestorePayload {
   bookmark: BookmarkRow & { metadata?: Record<string, unknown> };
   revision: { revision_id: string; full_text: string; document_id: string };
   run: Record<string, unknown> | null;
+}
+
+/** Parsed from persona `llm_snapshot.visual_model` for generative Inkblot SVG. */
+export interface InkblotVisualState {
+  svg_path_d: string;
+  primary_color: string;
+  secondary_color: string;
+  animation_speed: number;
+}
+
+/** Extract visual fields from stored llm_snapshot JSON (snake_case from backend). */
+export function parseInkblotVisualFromLlmSnapshot(
+  llm: Record<string, unknown> | null | undefined,
+): InkblotVisualState | null {
+  if (!llm || typeof llm !== 'object') return null;
+  const vm = llm.visual_model;
+  if (!vm || typeof vm !== 'object') return null;
+  const o = vm as Record<string, unknown>;
+  const d = typeof o.svg_path_d === 'string' ? o.svg_path_d.trim() : '';
+  const primary = typeof o.primary_color === 'string' ? o.primary_color.trim() : '';
+  const secondary = typeof o.secondary_color === 'string' ? o.secondary_color.trim() : '';
+  const speed = typeof o.animation_speed === 'number' && Number.isFinite(o.animation_speed) ? o.animation_speed : 1;
+  if (!d || d.length < 8) return null;
+  return {
+    svg_path_d: d,
+    primary_color: /^#[0-9A-Fa-f]{6}$/.test(primary) ? primary : '#6B5B6B',
+    secondary_color: /^#[0-9A-Fa-f]{6}$/.test(secondary) ? secondary : '#C4A8B8',
+    animation_speed: Math.min(3, Math.max(0.25, speed)),
+  };
+}
+
+/** Inkblot story persona (GET /v1/documents/{id}/persona). */
+export interface StoryPersonaSnapshotPayload {
+  version: number;
+  state: string;
+  deterministic: Record<string, unknown>;
+  /** May include `visual_model` when persona refresh produced generative SVG hints. */
+  llm_snapshot: Record<string, unknown> | null;
+  pet_style_policy: Record<string, unknown> | null;
+  source_run_id: string | null;
+  created_at?: string;
+}
+
+export interface StoryPersonaApiResponse {
+  document_id: string;
+  snapshot: StoryPersonaSnapshotPayload | null;
+  soul_loaded: boolean;
+  soul_paths: string[];
+  persona_refresh_pending: boolean;
+  latest_run_id: string | null;
+  inkblot_memory?: Record<string, unknown> | null;
+  inkblot_memory_updated_at?: string | null;
+}
+
+export interface StoryChatRequestBody {
+  revision_id?: string | null;
+  user_message: string;
+  chunk_ids?: string[] | null;
+  chapter_id?: string | null;
+  max_words?: number;
+  session_id?: string | null;
+  provider?: BetaLlmProviderId | null;
+}
+
+export interface StoryChatResponsePayload {
+  answer: string;
+  used_persona_version: number | null;
+  session_id: string;
+  context_manifest: Record<string, unknown>;
+  truncation_notice?: string | null;
+  confidence?: number | null;
+  persona_refresh_pending: boolean;
+  inkblot_memory_updated_at?: string | null;
+  success: boolean;
+  error?: string | null;
+  error_code?: string | null;
+  recovery_hints?: string[];
 }
 
 // --- Config ---
@@ -273,6 +390,10 @@ export async function createDocument(body: { title?: string; author?: string }):
   return apiFetch(`/v1/documents${q ? `?${q}` : ''}`, { method: 'POST' });
 }
 
+export async function deleteDocument(documentId: string): Promise<{ deleted: boolean; document_id: string }> {
+  return apiFetch(`/v1/documents/${encodeURIComponent(documentId)}`, { method: 'DELETE' });
+}
+
 export async function listDocumentChapters(documentId: string): Promise<{ document_id: string; chapters: ApiChapterRow[] }> {
   return apiFetch(`/v1/documents/${encodeURIComponent(documentId)}/chapters`);
 }
@@ -311,7 +432,15 @@ export async function getDocumentManuscript(documentId: string): Promise<{
 
 export async function createRevision(
   documentId: string,
-  body: { text: string; parent_revision_id?: string | null },
+  body: {
+    text: string;
+    parent_revision_id?: string | null;
+    /** When set, server persists chunk_versions for this revision (story chat, quick coach, list chunks). */
+    chunks?: ClientChunkSpan[];
+    /** Optional save origin metadata for lightweight revision-event tagging. */
+    save_source?: 'toolbar' | 'section_save';
+    save_section_id?: string | null;
+  },
 ): Promise<{ revision_id: string; document_id: string }> {
   return apiFetch(`/v1/documents/${encodeURIComponent(documentId)}/revisions`, {
     method: 'POST',
@@ -347,6 +476,9 @@ export interface QuickCoachRequestBody {
   current_chunk_text?: string;
   short_story_single_chapter?: boolean;
   provider?: BetaLlmProviderId | null;
+  /** When true, server appends user+assistant turns to Inkblot story chat. */
+  append_story_chat?: boolean;
+  story_chat_session_id?: string | null;
 }
 
 export interface RuntimeProviderModels {
@@ -411,6 +543,10 @@ export async function getJob(jobId: string): Promise<JobRecord> {
   return apiFetch(`/v1/jobs/${encodeURIComponent(jobId)}`);
 }
 
+export async function getJobProgress(jobId: string): Promise<JobProgressResponse> {
+  return apiFetch(`/v1/jobs/${encodeURIComponent(jobId)}/progress`);
+}
+
 export async function getLatestRevisionAnalysis(
   revisionId: string,
 ): Promise<LatestRevisionAnalysisResponse> {
@@ -441,6 +577,42 @@ export async function restoreBookmark(bookmarkId: number): Promise<RestorePayloa
   return apiFetch(`/v1/bookmarks/${bookmarkId}/restore`);
 }
 
+export async function getStoryPersona(documentId: string): Promise<StoryPersonaApiResponse> {
+  return apiFetch(`/v1/documents/${encodeURIComponent(documentId)}/persona`);
+}
+
+export async function postStoryChat(
+  documentId: string,
+  body: StoryChatRequestBody,
+): Promise<StoryChatResponsePayload> {
+  return apiFetch(`/v1/documents/${encodeURIComponent(documentId)}/story-chat`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function listStoryChatSessions(
+  documentId: string,
+): Promise<{ document_id: string; sessions: Record<string, unknown>[] }> {
+  return apiFetch(`/v1/documents/${encodeURIComponent(documentId)}/story-chat/sessions`);
+}
+
+export async function listStoryChatTurns(sessionId: string): Promise<{ session_id: string; turns: Record<string, unknown>[] }> {
+  return apiFetch(`/v1/story-chat/sessions/${encodeURIComponent(sessionId)}/turns`);
+}
+
+/** Enqueue full-session memory extraction when the user closes the Inkblot panel. */
+export async function postStoryChatSessionClose(
+  documentId: string,
+  sessionId: string,
+  body?: { provider?: BetaLlmProviderId | null; last_turn_index?: number | null },
+): Promise<{ success: boolean; scheduled: boolean; error?: string | null }> {
+  return apiFetch(
+    `/v1/documents/${encodeURIComponent(documentId)}/story-chat/sessions/${encodeURIComponent(sessionId)}/close-summary`,
+    { method: 'POST', body: JSON.stringify(body ?? {}) },
+  );
+}
+
 export interface QuickCoachOobPayload {
   error?: string;
   error_code?: string;
@@ -454,7 +626,14 @@ export interface QuickCoachOobPayload {
 }
 
 export type QuickCoachResult =
-  | { kind: 'advice'; advice: QuickCoachAdvice; run_id?: string | null; revision_id?: string | null }
+  | {
+      kind: 'advice';
+      advice: QuickCoachAdvice;
+      run_id?: string | null;
+      revision_id?: string | null;
+      story_chat_session_id?: string | null;
+      story_chat_appended?: boolean;
+    }
   | { kind: 'queued'; job_id: string; status: string; reason?: string }
   | ({ kind: 'oob' } & QuickCoachOobPayload)
   | { kind: 'run_revision_mismatch'; error?: string };
@@ -480,11 +659,14 @@ export async function postQuickCoach(
   }
   if (res.status === 200) {
     const advice = data.advice as QuickCoachAdvice | null | undefined;
+    const sid = data.story_chat_session_id;
     return {
       kind: 'advice',
       advice: advice ?? { headline: '', bullets: [] },
       run_id: data.run_id as string | null | undefined,
       revision_id: data.revision_id as string | null | undefined,
+      story_chat_session_id: typeof sid === 'string' && sid ? sid : null,
+      story_chat_appended: Boolean(data.story_chat_appended),
     };
   }
   if (res.status === 422) {
@@ -528,29 +710,54 @@ export async function postQuickCoach(
   throw new Error(`quick-coach ${res.status}: ${detail}`);
 }
 
+export function mapEvidenceSpans(raw: unknown): EvidenceSpanPayload[] {
+  if (!Array.isArray(raw)) return [];
+  const out: EvidenceSpanPayload[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const o = item as Record<string, unknown>;
+    const s = o.start_char;
+    const e = o.end_char;
+    if (typeof s !== 'number' || typeof e !== 'number' || e <= s) continue;
+    out.push({
+      start_char: s,
+      end_char: e,
+      quote: typeof o.quote === 'string' ? o.quote : '',
+      label: typeof o.label === 'string' ? o.label : 'evidence',
+    });
+  }
+  return out;
+}
+
 function mapCritic(raw: unknown): GraphCriticPayload | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
+  const spans = mapEvidenceSpans(o.evidence_spans);
   return {
     critique: typeof o.critique === 'string' ? o.critique : '',
     failure_points: Array.isArray(o.failure_points) ? o.failure_points.map(String) : [],
     verdict: typeof o.verdict === 'string' ? o.verdict : undefined,
+    ...(spans.length ? { evidence_spans: spans } : {}),
   };
 }
 
 function mapDefense(raw: unknown): GraphDefensePayload | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
+  const spans = mapEvidenceSpans(o.evidence_spans);
   return {
     defense: typeof o.defense === 'string' ? o.defense : '',
     valid_points: Array.isArray(o.valid_points) ? o.valid_points.map(String) : [],
     salvageability: typeof o.salvageability === 'string' ? o.salvageability : undefined,
+    ...(spans.length ? { evidence_spans: spans } : {}),
   };
 }
 
 export function judgmentFromPayload(entry: ChunkJudgmentEntryPayload | undefined): GraphChunkJudgment | null {
   if (!entry?.judgment) return null;
   const j = entry.judgment;
+  const jSpans = mapEvidenceSpans(j.evidence_spans);
+  const synthSpans = entry.evidence_synthesis?.spans ?? [];
   return {
     guidance: j.guidance ?? '',
     core_issue: j.core_issue ?? '',
@@ -559,6 +766,8 @@ export function judgmentFromPayload(entry: ChunkJudgmentEntryPayload | undefined
     reasoning: typeof j.reasoning === 'string' ? j.reasoning : '',
     critic: mapCritic(entry.critic_result),
     defense: mapDefense(entry.defense_result),
+    ...(jSpans.length ? { judgment_evidence_spans: jSpans } : {}),
+    ...(synthSpans.length ? { synthesis_spans: synthSpans } : {}),
   };
 }
 
@@ -609,7 +818,12 @@ export async function sleep(ms: number): Promise<void> {
 
 export async function pollJobUntilDone(
   jobId: string,
-  opts?: { intervalMs?: number; maxAttempts?: number; signal?: AbortSignal },
+  opts?: {
+    intervalMs?: number;
+    maxAttempts?: number;
+    signal?: AbortSignal;
+    onTick?: (job: JobRecord, attempt: number) => void | Promise<void>;
+  },
 ): Promise<JobRecord> {
   const interval = opts?.intervalMs ?? 2000;
   // Default to 60 minutes for long-running full-manuscript analyses.
@@ -622,6 +836,7 @@ export async function pollJobUntilDone(
       throw err;
     }
     const j = await getJob(jobId);
+    if (opts?.onTick) await opts.onTick(j, i);
     if (j.status === 'succeeded') return j;
     if (j.status === 'failed') throw new Error(j.error || 'job failed');
     await sleep(interval);

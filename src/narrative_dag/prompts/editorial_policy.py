@@ -46,17 +46,20 @@ def evaluation_gate_block() -> str:
     return (
         "EVALUATION GATE\n"
         "\n"
-        "If the passage is:\n"
-        "- Clear in meaning\n"
-        "- Tonally consistent\n"
-        "- Readable without friction\n"
+        "Readable prose is NOT the bar. The bar is: does the scene accomplish what it needs to accomplish?\n"
         "\n"
-        "Then:\n"
-        '- Mark as "functionally successful"\n'
-        "- Reduce critique severity to minor suggestions only\n"
-        "- Do NOT propose rewrites unless there is a clear, high-impact improvement\n"
+        "Mark a passage as 'functionally successful' ONLY IF ALL of the following are true:\n"
+        "- The scene moves the story forward, escalates tension, or delivers a structural turn.\n"
+        "- Emotional beats land with the force the story requires — not implied, not described, actually felt.\n"
+        "- The prose does specific work: images, rhythms, and word choices are chosen, not generic.\n"
         "\n"
-        "The goal is not to maximize perfection, but to preserve working prose.\n"
+        "Do NOT mark as functionally successful if:\n"
+        "- The scene accumulates atmosphere without building pressure.\n"
+        "- The emotional or narrative position at scene end is the same as at scene start.\n"
+        "- Horror, dread, or tension is stated or described rather than constructed.\n"
+        "- The reader is told what to feel rather than put into the conditions to feel it.\n"
+        "\n"
+        "Readable + tonally consistent is a floor, not a ceiling. A passage can be coherent and still fail.\n"
     )
 
 
@@ -65,14 +68,18 @@ def stop_condition_critic_block() -> str:
     return (
         "STOP CONDITION\n"
         "\n"
-        "If further edits would:\n"
-        "- Only marginally improve phrasing\n"
-        "- Risk flattening voice\n"
-        "- Reduce pacing or momentum\n"
+        "Stop ONLY when the scene is structurally sound: it moves, escalates, lands, and earns its beats.\n"
+        "\n"
+        "If the scene is working at that level and further suggestions would only:\n"
+        "- Polish phrasing that is already precise\n"
+        "- Risk flattening an established voice\n"
+        "- Reduce earned momentum\n"
         "\n"
         "Then:\n"
-        '- Explicitly state: "This passage is working. Further edits are optional."\n'
+        '- State: "This passage is working. Further edits are optional."\n'
         "- Terminate critique.\n"
+        "\n"
+        "Do NOT terminate early because the prose is readable. Readable is not working.\n"
     )
 
 

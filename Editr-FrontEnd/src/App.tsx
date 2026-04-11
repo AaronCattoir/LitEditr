@@ -29,6 +29,7 @@ import {
   createRevision,
   postAnalyzeRevision,
   pollJobUntilDone,
+  getJobProgress,
   postQuickCoach,
   genreIntentionPayloadFromMetadata,
   buildJudgmentMap,
@@ -38,11 +39,17 @@ import {
   getDocumentManuscript,
   getRuntimeProviders,
   resolveSelectableLlmProvider,
+  getStoryPersona,
+  parseInkblotVisualFromLlmSnapshot,
+  type InkblotVisualState,
 } from './lib/api';
 import { ProjectInit } from './components/ProjectInit';
 import { SettingsPanel } from './components/SettingsPanel';
 import { StoryAnalysisPanel } from './components/StoryAnalysisPanel';
+import { StoryChatPanel } from './components/StoryChatPanel';
+import { InkblotAvatar } from './components/InkblotAvatar';
 import { defaultStoryManuscriptFilename, downloadMarkdownFile } from './lib/analysisExport';
+import { printStoryManuscript } from './lib/printManuscript';
 import { ChapterSidebar } from './components/ChapterSidebar';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
@@ -60,7 +67,13 @@ import {
   saveDraft,
   savePendingDraft,
   loadPendingDraft,
+  clearTransientSectionStatuses,
 } from './lib/draftStorage';
+import {
+  STORY_CHAT_STORAGE_VERSION,
+  loadStoryChatStored,
+  saveStoryChatStored,
+} from './lib/storyChatStorage';
 import type { RestorePayload } from './lib/api';
 
 function distributeSectionUpdates(chapters: ChapterDoc[], flatUpdated: SectionData[]): ChapterDoc[] {
@@ -120,7 +133,10 @@ export default function App() {
   const [chapters, setChapters] = useState<ChapterDoc[]>([]);
   const [activeChapterId, setActiveChapterId] = useState('');
   const [isFocusMode, setIsFocusMode] = useState(false);
+  const [isChapterSidebarCollapsed, setIsChapterSidebarCollapsed] = useState(false);
   const [rightPanel, setRightPanel] = useState<'none' | 'settings' | 'story'>('none');
+  const [chatOpen, setChatOpen] = useState(false);
+  const [storyChatTurnsRefresh, setStoryChatTurnsRefresh] = useState(0);
   const [latestReport, setLatestReport] = useState<EditorialReportPayload | null>(null);
   const [latestAnalysisKind, setLatestAnalysisKind] = useState<string | null>(null);
   const [latestAnalysisFromFallback, setLatestAnalysisFromFallback] = useState(false);
@@ -131,19 +147,37 @@ export default function App() {
   const [submitPhase, setSubmitPhase] = useState<string | null>(null);
   const [runtimeProviders, setRuntimeProviders] = useState<RuntimeProvidersResponse | null>(null);
   const [runtimeProvidersError, setRuntimeProvidersError] = useState<string | null>(null);
+  const [inkblotVisual, setInkblotVisual] = useState<InkblotVisualState | null>(null);
+  const [personaRefreshPending, setPersonaRefreshPending] = useState(false);
   const draftHydrated = useRef(false);
   const mockDraftHydrated = useRef(false);
   const submitAbortRef = useRef<AbortController | null>(null);
+  /** Prevents double sparkle clicks before React re-renders `submitting` (duplicate QC + chat turns). */
+  const quickCoachFlightRef = useRef(false);
+  const progressSeenRef = useRef(new Map<string, number>());
   const importInputRef = useRef<HTMLInputElement>(null);
+  const chaptersRef = useRef<ChapterDoc[]>([]);
+  const metadataRef = useRef<ProjectMetadata | null>(null);
+  const isSavingRef = useRef(false);
 
   const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 
   useEffect(() => {
     if (!bootstrap) return;
     setMetadata(bootstrap.metadata);
-    setChapters(bootstrap.chapters);
+    setChapters(clearTransientSectionStatuses(bootstrap.chapters));
     setActiveChapterId(bootstrap.activeChapterId ?? bootstrap.chapters[0]?.id ?? '');
+    setIsSubmittingAll(false);
+    setSubmitPhase(null);
   }, [bootstrap]);
+
+  useEffect(() => {
+    chaptersRef.current = chapters;
+  }, [chapters]);
+
+  useEffect(() => {
+    metadataRef.current = metadata;
+  }, [metadata]);
 
   useEffect(() => {
     if (mock || !bootstrap) {
@@ -180,6 +214,33 @@ export default function App() {
       return { ...m, llmProvider: next };
     });
   }, [mock, runtimeProviders, bootstrap]);
+
+  const refreshPersonaVisual = useCallback(async (documentId: string) => {
+    try {
+      const persona = await getStoryPersona(documentId);
+      setInkblotVisual(parseInkblotVisualFromLlmSnapshot(persona.snapshot?.llm_snapshot));
+      setPersonaRefreshPending(Boolean(persona.persona_refresh_pending));
+    } catch {
+      setPersonaRefreshPending(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mock || !metadata?.documentId) {
+      setInkblotVisual(null);
+      setPersonaRefreshPending(false);
+      return;
+    }
+    void refreshPersonaVisual(metadata.documentId);
+  }, [mock, metadata?.documentId, metadata?.runId, refreshPersonaVisual]);
+
+  useEffect(() => {
+    if (mock || !metadata?.documentId || !personaRefreshPending) return;
+    const t = setTimeout(() => {
+      void refreshPersonaVisual(metadata.documentId!);
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [mock, metadata?.documentId, personaRefreshPending, refreshPersonaVisual]);
 
   /** Same resolution as assertProviderReadyForApi; use in API bodies so provider matches server capabilities. */
   const effectiveLlmProviderForRequests = useMemo(() => {
@@ -270,6 +331,31 @@ export default function App() {
     [refreshLatestAnalysis],
   );
 
+  const applyRunningJobProgress = useCallback(
+    async (jobId: string) => {
+      if (mock) return;
+      try {
+        const snap = await getJobProgress(jobId);
+        const report = snap.report;
+        if (!report || !report.chunk_judgments?.length) return;
+        const prior = progressSeenRef.current.get(jobId) ?? -1;
+        if (snap.completed_chunks <= prior) return;
+        progressSeenRef.current.set(jobId, snap.completed_chunks);
+        const map = buildJudgmentMap(report);
+        setChapters((cs) => applyJudgmentsToChapters(cs, map));
+        if (snap.run_id) {
+          setMetadata((m) => (m ? { ...m, runId: snap.run_id ?? undefined } : m));
+        }
+        if (snap.total_chunks && snap.total_chunks > 0) {
+          setSubmitPhase(`Analysis running — ${snap.completed_chunks}/${snap.total_chunks} sections done…`);
+        }
+      } catch {
+        // Best-effort progressive hydration; ignore transient polling failures.
+      }
+    },
+    [mock],
+  );
+
   useEffect(() => {
     if (!metadata?.revisionId || mock) {
       setLatestReport(null);
@@ -347,15 +433,41 @@ export default function App() {
     );
   }, [chapters, metadata?.title, metadata?.documentId]);
 
+  const handlePrintStoryManuscript = useCallback(() => {
+    const built = buildManuscriptAndChunks(chapters);
+    const v = validateManuscriptBuild(built);
+    if (!v.ok) {
+      alert('message' in v ? v.message : 'Manuscript validation failed.');
+      return;
+    }
+    const ok = printStoryManuscript({
+      title: metadata?.title ?? 'Untitled',
+      manuscript: built.documentText,
+    });
+    if (!ok) {
+      alert('Could not start printing. Please try again.');
+    }
+  }, [chapters, metadata?.title]);
+
   useEffect(() => {
     if (!metadata?.documentId || mock || draftHydrated.current) return;
     draftHydrated.current = true;
     const d = loadDraft(metadata.documentId);
     if (d) {
-      setChapters(d.chapters);
+      setChapters(clearTransientSectionStatuses(d.chapters));
       setActiveChapterId(d.activeChapterId);
       // Keep server-backed revision/run ids from bootstrap; draft only had local editor state.
-      setMetadata((m) => (m ? { ...d.metadata, ...m } : d.metadata));
+      setMetadata((m) =>
+        m
+          ? {
+              ...d.metadata,
+              documentId: m.documentId,
+              revisionId: m.revisionId,
+              runId: m.runId,
+              analyzedRevisionId: m.analyzedRevisionId,
+            }
+          : d.metadata,
+      );
     }
   }, [metadata?.documentId, mock]);
 
@@ -364,7 +476,7 @@ export default function App() {
     mockDraftHydrated.current = true;
     const p = loadPendingDraft();
     if (p?.chapters?.length) {
-      setChapters(p.chapters);
+      setChapters(clearTransientSectionStatuses(p.chapters));
       setActiveChapterId(p.activeChapterId);
       setMetadata(p.metadata);
     }
@@ -380,7 +492,7 @@ export default function App() {
     const t = setTimeout(() => {
       saveDraft(metadata.documentId!, {
         version: DRAFT_VERSION,
-        chapters,
+        chapters: clearTransientSectionStatuses(chapters),
         activeChapterId,
         metadata: {
           ...metadata,
@@ -398,7 +510,7 @@ export default function App() {
     const t = setTimeout(() => {
       savePendingDraft({
         version: DRAFT_VERSION,
-        chapters,
+        chapters: clearTransientSectionStatuses(chapters),
         activeChapterId,
         metadata: {
           ...metadata,
@@ -440,6 +552,38 @@ export default function App() {
   }, []);
 
   const activeRows = chapters.find((c) => c.id === activeChapterId)?.rows ?? [];
+  const activeChapter = useMemo(
+    () => chapters.find((c) => c.id === activeChapterId) ?? chapters[0],
+    [chapters, activeChapterId],
+  );
+
+  const chunkSpanById = useMemo(() => {
+    const { chunks } = buildManuscriptAndChunks(chapters);
+    return new Map(chunks.map((c) => [c.chunk_id, c]));
+  }, [chapters]);
+
+  const evidenceScrollersRef = useRef(new Map<string, (key: string) => void>());
+
+  const registerEvidenceScroller = useCallback((sectionId: string, fn: (key: string) => void) => {
+    evidenceScrollersRef.current.set(sectionId, fn);
+    return () => {
+      evidenceScrollersRef.current.delete(sectionId);
+    };
+  }, []);
+
+  const handleJumpToManuscriptEvidence = useCallback((payload: { chunkId: string; evidenceKey: string }) => {
+    const esc =
+      typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+        ? CSS.escape(payload.chunkId)
+        : payload.chunkId.replace(/"/g, '\\"');
+    document.querySelector(`[data-section-chunk-id="${esc}"]`)?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center',
+    });
+    window.setTimeout(() => {
+      evidenceScrollersRef.current.get(payload.chunkId)?.(payload.evidenceKey);
+    }, 100);
+  }, []);
 
   const updateActiveRows = useCallback((updater: (rows: SectionData[]) => SectionData[]) => {
     setChapters((prev) =>
@@ -454,11 +598,68 @@ export default function App() {
     [updateActiveRows],
   );
 
+  const persistManuscriptRevision = useCallback(
+    async (opts?: { source?: 'toolbar' | 'section_save'; sectionId?: string }): Promise<boolean> => {
+      const built = buildManuscriptAndChunks(chaptersRef.current);
+      const v = validateManuscriptBuild(built);
+      if (!v.ok) {
+        alert('message' in v ? v.message : 'Manuscript validation failed.');
+        return false;
+      }
+      if (isSavingRef.current) return false;
+      if (mock) {
+        isSavingRef.current = true;
+        setIsSaving(true);
+        setTimeout(() => {
+          isSavingRef.current = false;
+          setIsSaving(false);
+        }, 800);
+        return true;
+      }
+      const currentMeta = metadataRef.current;
+      if (!currentMeta?.documentId) return false;
+      isSavingRef.current = true;
+      setIsSaving(true);
+      try {
+        const { documentText } = built;
+        const { revision_id } = await createRevision(currentMeta.documentId, {
+          text: documentText,
+          parent_revision_id: currentMeta.revisionId ?? null,
+          chunks: built.chunks,
+          save_source: opts?.source,
+          save_section_id: opts?.sectionId ?? null,
+        });
+        setMetadata((m) =>
+          m
+            ? {
+                ...m,
+                revisionId: revision_id,
+                runId: undefined,
+                analyzedRevisionId: undefined,
+              }
+            : m,
+        );
+        return true;
+      } catch (e) {
+        console.error(e);
+        alert(e instanceof Error ? e.message : 'Save failed');
+        return false;
+      } finally {
+        isSavingRef.current = false;
+        setIsSaving(false);
+      }
+    },
+    [mock],
+  );
+
   const handleToggleEdit = useCallback(
     (id: string, isEditing: boolean) => {
       updateActiveRows((rows) => rows.map((s) => (s.id === id ? { ...s, isEditing } : s)));
+      if (!isEditing) {
+        void persistManuscriptRevision({ source: 'section_save', sectionId: id });
+      }
     },
-    [updateActiveRows],
+    [updateActiveRows, persistManuscriptRevision],
   );
 
   const handleDelete = useCallback(
@@ -614,6 +815,8 @@ export default function App() {
   };
 
   const handleSubmit = async (id: string) => {
+    if (quickCoachFlightRef.current) return;
+    quickCoachFlightRef.current = true;
     updateActiveRows((rows) => rows.map((s) => (s.id === id ? { ...s, status: 'submitting' } : s)));
 
     try {
@@ -657,6 +860,8 @@ export default function App() {
         latestRunRevisionId === metadata.revisionId &&
         !latestAnalysisFromFallback;
       const alignedRunId = runPinnedToThisRevision ? metadata.runId ?? null : null;
+      const canAppendQuickCoachToStoryChat =
+        Boolean(metadata.documentId) && Boolean(activeChapterId || chapters[0]?.id);
       const quickBody = {
         chunk_id: id,
         run_id: alignedRunId,
@@ -667,6 +872,12 @@ export default function App() {
         short_story_single_chapter: Boolean(metadata.shortStorySingleChapter),
         provider: effectiveLlmProviderForRequests,
         ...(chunkSlice != null ? { current_chunk_text: chunkSlice } : {}),
+        ...(canAppendQuickCoachToStoryChat
+          ? {
+              append_story_chat: true,
+              story_chat_session_id: loadStoryChatStored(metadata.documentId)?.session_id ?? null,
+            }
+          : {}),
       };
       
       let res = await postQuickCoach(metadata.revisionId, quickBody);
@@ -722,16 +933,40 @@ export default function App() {
             : m,
         );
       }
-      
-      updateActiveRows((rows) =>
-        rows.map((s) =>
-          s.id === id ? { ...s, status: 'coached', quickCoach: res.advice } : s,
-        ),
-      );
+
+      if (res.kind === 'advice') {
+        const intoChat =
+          canAppendQuickCoachToStoryChat &&
+          metadata.documentId &&
+          res.story_chat_appended &&
+          res.story_chat_session_id;
+        if (intoChat) {
+          saveStoryChatStored(metadata.documentId, {
+            version: STORY_CHAT_STORAGE_VERSION,
+            session_id: res.story_chat_session_id,
+            pinned_chunk_ids: [id],
+          });
+          setChatOpen(true);
+          setStoryChatTurnsRefresh((n) => n + 1);
+          updateActiveRows((rows) =>
+            rows.map((s) =>
+              s.id === id ? { ...s, status: 'draft' as const, quickCoach: undefined } : s,
+            ),
+          );
+        } else {
+          updateActiveRows((rows) =>
+            rows.map((s) =>
+              s.id === id ? { ...s, status: 'coached', quickCoach: res.advice } : s,
+            ),
+          );
+        }
+      }
     } catch (e) {
       console.error(e);
       updateActiveRows((rows) => rows.map((s) => (s.id === id ? { ...s, status: 'draft' } : s)));
       alert(e instanceof Error ? e.message : 'Quick coach failed');
+    } finally {
+      quickCoachFlightRef.current = false;
     }
   };
 
@@ -762,6 +997,7 @@ export default function App() {
       const { revision_id } = await createRevision(metadata.documentId, {
         text: built.documentText,
         parent_revision_id: metadata.revisionId,
+        chunks: built.chunks,
       });
       submittedRevisionId = revision_id;
       setMetadata((m) =>
@@ -786,7 +1022,13 @@ export default function App() {
         provider: effectiveLlmProviderForRequests,
       });
       setSubmitPhase('Reanalyzing section — this may take a minute…');
-      const job = await pollJobUntilDone(job_id, { signal });
+      progressSeenRef.current.set(job_id, -1);
+      const job = await pollJobUntilDone(job_id, {
+        signal,
+        onTick: async () => {
+          await applyRunningJobProgress(job_id);
+        },
+      });
       const result = job.result;
       if (!result?.report) throw new Error('Job succeeded but report missing');
       const map = buildJudgmentMap(result.report);
@@ -825,41 +1067,7 @@ export default function App() {
   };
 
   const handleSave = async () => {
-    const built = buildManuscriptAndChunks(chapters);
-    const v = validateManuscriptBuild(built);
-    if (!v.ok) {
-      alert('message' in v ? v.message : 'Manuscript validation failed.');
-      return;
-    }
-    if (mock) {
-      setIsSaving(true);
-      setTimeout(() => setIsSaving(false), 800);
-      return;
-    }
-    if (!metadata?.documentId) return;
-    setIsSaving(true);
-    try {
-      const { documentText } = built;
-      const { revision_id } = await createRevision(metadata.documentId, {
-        text: documentText,
-        parent_revision_id: metadata.revisionId ?? null,
-      });
-      setMetadata((m) =>
-        m
-          ? {
-              ...m,
-              revisionId: revision_id,
-              runId: undefined,
-              analyzedRevisionId: undefined,
-            }
-          : m,
-      );
-    } catch (e) {
-      console.error(e);
-      alert(e instanceof Error ? e.message : 'Save failed');
-    } finally {
-      setIsSaving(false);
-    }
+    await persistManuscriptRevision({ source: 'toolbar' });
   };
 
   const handleSubmitAll = async () => {
@@ -893,6 +1101,7 @@ export default function App() {
       const { revision_id } = await createRevision(metadata.documentId, {
         text: built.documentText,
         parent_revision_id: metadata.revisionId ?? null,
+        chunks: built.chunks,
       });
       submittedRevisionId = revision_id;
       setMetadata((m) =>
@@ -915,7 +1124,13 @@ export default function App() {
         provider: effectiveLlmProviderForRequests,
       });
       setSubmitPhase('Analysis running — this may take a minute…');
-      const job = await pollJobUntilDone(job_id, { signal });
+      progressSeenRef.current.set(job_id, -1);
+      const job = await pollJobUntilDone(job_id, {
+        signal,
+        onTick: async () => {
+          await applyRunningJobProgress(job_id);
+        },
+      });
       const result = job.result;
       if (!result?.report) throw new Error('Job succeeded but report missing');
       const map = buildJudgmentMap(result.report);
@@ -975,6 +1190,17 @@ export default function App() {
     return <ProjectInit onBootstrap={setBootstrap} />;
   }
 
+  const storyChatChapterId = activeChapterId || chapters[0]?.id || '';
+  const storyChatChunkOptions = activeRows.map((row, idx) => ({
+    id: row.id,
+    label:
+      row.content.trim().length > 0
+        ? `Section ${idx + 1}: ${row.content.trim().replace(/\s+/g, ' ').slice(0, 42)}`
+        : `Section ${idx + 1}`,
+  }));
+  const storyChatEnabled =
+    !mock && Boolean(metadata.documentId) && Boolean(storyChatChapterId);
+
   return (
     <div className="min-h-screen flex font-sans selection:bg-accent/20 bg-paper overflow-hidden">
       {!isFocusMode && (
@@ -985,12 +1211,14 @@ export default function App() {
           onAddChapter={handleAddChapter}
           onRenameChapter={handleRenameChapter}
           isFocusMode={isFocusMode}
+          collapsed={isChapterSidebarCollapsed}
+          onToggleCollapsed={() => setIsChapterSidebarCollapsed((v) => !v)}
         />
       )}
 
       <div
         className={cn(
-          'flex-1 flex flex-col h-screen overflow-y-auto transition-all duration-500',
+          'relative flex-1 flex flex-col h-screen overflow-y-auto transition-all duration-500',
           rightPanel !== 'none' && !isFocusMode ? 'mr-80' : '',
         )}
       >
@@ -1129,6 +1357,11 @@ export default function App() {
                     onSplit={handleSplitSection}
                     onReanalyze={mock ? undefined : handleReanalyzeSection}
                     reanalyzeDisabled={isSubmittingAll || isSaving}
+                    chapter={activeChapter ?? { id: '', title: '', sortOrder: 0, rows: [] }}
+                    sectionRowIndex={idx}
+                    chunkSpan={chunkSpanById.get(section.id)}
+                    onRegisterEvidenceScroller={registerEvidenceScroller}
+                    saveDisabled={isSaving}
                   />
                   <SectionInsertGap
                     isFocusMode={isFocusMode}
@@ -1139,6 +1372,30 @@ export default function App() {
             </AnimatePresence>
           </div>
         </main>
+
+        {storyChatEnabled && !isFocusMode && (
+          <button
+            type="button"
+            onClick={() => setChatOpen((o) => !o)}
+            className={cn(
+              'fixed flex h-12 w-12 items-center justify-center rounded-full border border-border bg-surface text-accent shadow-lg transition-colors hover:bg-overlay',
+              chatOpen ? 'z-20' : 'z-40',
+              submitPhase ? 'bottom-24' : 'bottom-6',
+              chatOpen && 'ring-2 ring-accent/50',
+            )}
+            style={{ left: isChapterSidebarCollapsed ? '4.75rem' : '19.5rem' }}
+            title={chatOpen ? 'Close Inkblot chat' : 'Open Inkblot chat'}
+            aria-expanded={chatOpen}
+            aria-label="Inkblot story chat"
+          >
+            <InkblotAvatar
+              visual={inkblotVisual}
+              size={36}
+              status={personaRefreshPending ? 'thinking' : 'idle'}
+              fallbackIcon={false}
+            />
+          </button>
+        )}
       </div>
 
       <AnimatePresence>
@@ -1154,8 +1411,24 @@ export default function App() {
             useMockApi={mock}
             onRestore={handleRestoreBookmark}
             onExportStory={handleExportStoryManuscript}
+            onPrintStory={handlePrintStoryManuscript}
             runtimeProviders={runtimeProviders}
             runtimeProvidersError={runtimeProvidersError}
+          />
+        )}
+        {chatOpen && storyChatEnabled && !isFocusMode && (
+          <StoryChatPanel
+            key={metadata.documentId}
+            isOpen={chatOpen}
+            onClose={() => setChatOpen(false)}
+            documentId={metadata.documentId!}
+            revisionId={metadata.revisionId}
+            chapterId={storyChatChapterId}
+            provider={effectiveLlmProviderForRequests}
+            assertProviderReady={assertProviderReadyForApi}
+            chunkOptions={storyChatChunkOptions}
+            inkblotVisual={inkblotVisual}
+            turnsRefreshSignal={storyChatTurnsRefresh}
           />
         )}
         {rightPanel === 'story' && !isFocusMode && (
@@ -1170,6 +1443,7 @@ export default function App() {
             report={latestReport}
             analysisFromFallback={latestAnalysisFromFallback}
             runBoundRevisionId={latestRunRevisionId}
+            onJumpToManuscriptEvidence={handleJumpToManuscriptEvidence}
           />
         )}
       </AnimatePresence>

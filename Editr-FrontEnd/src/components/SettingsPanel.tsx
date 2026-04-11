@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { motion } from 'motion/react';
-import { X, BookOpen, Users, MapPin, Tag, Bookmark, Download, Cpu } from 'lucide-react';
+import { X, BookOpen, Users, MapPin, Tag, Bookmark, Download, Cpu, Printer } from 'lucide-react';
 import {
   ProjectMetadata,
   listDocumentBookmarks,
@@ -24,6 +24,8 @@ interface SettingsPanelProps {
   onRestore?: (payload: RestorePayload) => void;
   /** Download current manuscript text (chapters + sections, same format as save/analyze). */
   onExportStory?: () => void;
+  /** Open browser print flow for current manuscript only (no notes/panels). */
+  onPrintStory?: () => void;
   runtimeProviders?: RuntimeProvidersResponse | null;
   runtimeProvidersError?: string | null;
 }
@@ -39,6 +41,7 @@ export function SettingsPanel({
   useMockApi = false,
   onRestore,
   onExportStory,
+  onPrintStory,
   runtimeProviders = null,
   runtimeProvidersError = null,
 }: SettingsPanelProps) {
@@ -329,23 +332,35 @@ export function SettingsPanel({
           </motion.div>
         )}
 
-        {onExportStory && (
+        {(onExportStory || onPrintStory) && (
           <div className="flex flex-col gap-2 border-t border-border pt-6">
             <label className="text-xs font-semibold uppercase tracking-wider text-ink-light flex items-center gap-2">
               <Download size={14} />
-              Export manuscript
+              Story manuscript
             </label>
-            <button
-              type="button"
-              onClick={() => onExportStory()}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-overlay hover:bg-overlay/80 text-sm font-medium text-ink border border-border/60"
-            >
-              <Download size={16} />
-              Download story (.md)
-            </button>
+            {onExportStory && (
+              <button
+                type="button"
+                onClick={() => onExportStory()}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-overlay hover:bg-overlay/80 text-sm font-medium text-ink border border-border/60"
+              >
+                <Download size={16} />
+                Download story (.md)
+              </button>
+            )}
+            {onPrintStory && (
+              <button
+                type="button"
+                onClick={() => onPrintStory()}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-overlay hover:bg-overlay/80 text-sm font-medium text-ink border border-border/60"
+              >
+                <Printer size={16} />
+                Print story
+              </button>
+            )}
             <p className="text-xs text-ink-light/70 leading-relaxed">
               Exports Markdown (same as the rich editor: headings, lists, emphasis). Chapter delimiters and scene markers
-              (~) are preserved for re-import. Analysis export lives in Story analysis.
+              (~) are preserved for re-import. Print opens a story-only document and uses your browser print dialog.
             </p>
           </div>
         )}

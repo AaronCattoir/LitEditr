@@ -91,6 +91,33 @@ class _StructuredInvoker:
                 "bullets": ["Clarify intent", "Ground the gesture"],
                 "try_next": "Add one sensory line.",
             },
+            "InkblotPersonaLLMSnapshot": {
+                "one_liner": "A attentive companion for this revision.",
+                "alignment_notes": "Emphasize clarity and emotional honesty.",
+                "personality_paragraph": "Warm, precise, and lightly playful; match the scene's heat without crowding the writer.",
+                "tone_reminders": ["Match scene heat", "Stay kind"],
+                "visual_model": {
+                    "svg_path_d": "M50 15 C70 25 85 45 80 65 C75 85 55 92 50 88 C45 92 25 85 20 65 C15 45 30 25 50 15 Z",
+                    "primary_color": "#6B5B6B",
+                    "secondary_color": "#C4A8B8",
+                    "animation_speed": 1.0,
+                },
+            },
+            "InkblotPersonaParagraphRefresh": {
+                "personality_paragraph": "Refreshed two-sentence voice aligned to writer memory.",
+            },
+            "InkblotMemoryMergeResult": {
+                "schema_version": 1,
+                "rolling_summary": "Writer wants pacing help.",
+                "open_goals": ["Clarify stakes"],
+                "noted_emotions": ["anxious"],
+            },
+            "InkblotMemoryCloseSummary": {
+                "schema_version": 1,
+                "session_point": "Discuss revision scope.",
+                "session_goals": ["Finish chapter"],
+                "session_emotions": ["hopeful"],
+            },
             "CharacterDatabase": {
                 "characters": [
                     {
@@ -160,6 +187,18 @@ def mock_llm(monkeypatch):
     import narrative_dag.llm as llm_runtime
 
     monkeypatch.setattr(llm_runtime, "get_llm", lambda *args, **kwargs: FakeLLM())
+
+
+@pytest.fixture(autouse=True)
+def disable_persona_refresh_background(monkeypatch):
+    """Avoid daemon thread holding SQLite open (Windows temp file teardown)."""
+    monkeypatch.setenv("EDITR_DISABLE_PERSONA_REFRESH", "1")
+
+
+@pytest.fixture(autouse=True)
+def inkblot_memory_jobs_inline(monkeypatch):
+    """Run Inkblot memory close/batch/digest on the test thread so temp SQLite can unlink."""
+    monkeypatch.setenv("EDITR_INKBLOT_MEMORY_JOBS_INLINE", "1")
 
 
 @pytest.fixture

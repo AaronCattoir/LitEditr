@@ -64,7 +64,14 @@ def paragraph_analyzer(state: dict[str, Any]) -> dict[str, Any]:
     if prompt_ctx is None:
         return {}
     prompt = paragraph_analysis_prompt(prompt_ctx)
-    analysis = structured_invoke(llm, [HumanMessage(content=prompt)], ParagraphAnalysis)
+    cid = getattr(ctx, "target_chunk", None)
+    chunk_id = getattr(cid, "id", "?")
+    analysis = structured_invoke(
+        llm,
+        [HumanMessage(content=prompt)],
+        ParagraphAnalysis,
+        trace_label=f"representation:paragraph:{chunk_id}",
+    )
     return {"paragraph_analysis": analysis}
 
 
@@ -83,7 +90,13 @@ def voice_profiler(state: dict[str, Any]) -> dict[str, Any]:
     if prompt_ctx is None:
         return {}
     prompt = voice_profile_prompt(prompt_ctx, paragraph_intent=analysis.intent)
-    profile = structured_invoke(llm, [HumanMessage(content=prompt)], VoiceProfile)
+    chunk_id = getattr(ctx.target_chunk, "id", "?")
+    profile = structured_invoke(
+        llm,
+        [HumanMessage(content=prompt)],
+        VoiceProfile,
+        trace_label=f"representation:voice:{chunk_id}",
+    )
     return {"voice_profile": profile}
 
 
@@ -229,6 +242,6 @@ def document_state_builder(
 
 
 def run_document_state_builder(state: dict[str, Any]) -> dict[str, Any]:
-    """LangGraph node wrapper for document_state_builder."""
+    """Pipeline step wrapper for document_state_builder."""
     return document_state_builder(state)
 

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import sys
 import time
-from typing import Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Callable
 
 from langchain_core.messages import HumanMessage
 
@@ -139,13 +140,42 @@ def risk_detector(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def run_all_detectors(state: dict[str, Any]) -> dict[str, Any]:
-    """Run all detector nodes and merge outputs."""
+    """Run all detector LLM calls in parallel; merge outputs (wall time ~ max, not sum)."""
+    chunk_id = state.get("current_chunk_id") or "?"
+    t_wall = time.time()
+    jobs: list[tuple[str, Callable[[], dict[str, Any]]]] = [
+        ("drift", lambda: drift_detector(state)),
+        ("cliche", lambda: cliche_detector(state)),
+        ("vagueness", lambda: vagueness_detector(state)),
+        ("emotional_honesty", lambda: emotional_honesty_detector(state)),
+        ("redundancy", lambda: redundancy_detector(state)),
+        ("risk", lambda: risk_detector(state)),
+    ]
+
     out: dict[str, Any] = {}
-    out.update(drift_detector(state))
-    out.update(cliche_detector(state))
-    out.update(vagueness_detector(state))
-    out.update(emotional_honesty_detector(state))
-    out.update(redundancy_detector(state))
-    out.update(risk_detector(state))
+    with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+        future_to_name = {pool.submit(fn): name for name, fn in jobs}
+        for fut in as_completed(future_to_name):
+            name = future_to_name[fut]
+            try:
+                out.update(fut.result())
+            except Exception as e:
+                _log_detector(state, name, f"parallel merge failed: {e}")
+                defaults: dict[str, Any] = {
+                    "drift": ("drift_result", DriftResult()),
+                    "cliche": ("cliche_result", ClicheResult()),
+                    "vagueness": ("vagueness_result", VaguenessResult()),
+                    "emotional_honesty": ("emotional_honesty_result", EmotionalHonestyResult()),
+                    "redundancy": ("redundancy_result", RedundancyResult()),
+                    "risk": ("risk_result", RiskResult()),
+                }
+                k, v = defaults[name]
+                out[k] = v
+
+    print(
+        f"       detectors[all] chunk={chunk_id} wall {time.time() - t_wall:.1f}s",
+        file=sys.stderr,
+        flush=True,
+    )
     return out
 

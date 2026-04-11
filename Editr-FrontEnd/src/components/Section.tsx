@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Sparkles,
@@ -12,7 +12,8 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { SectionData, type GraphChunkJudgment } from '../lib/api';
+import type { ChapterDoc, ClientChunkSpan, GraphChunkJudgment, SectionData } from '../lib/api';
+import { buildEditorHighlightsForSection } from '../lib/evidenceMapping';
 import { RichTextEditor } from './RichTextEditor';
 import { getSceneSplitMarker, splitOnSceneMarkers } from '../lib/manuscriptSerialize';
 
@@ -60,6 +61,17 @@ interface SectionProps {
   /** Re-run pipeline for this chunk only (partial analyze). */
   onReanalyze?: (id: string) => void;
   reanalyzeDisabled?: boolean;
+  /** Active chapter (for manuscript header offset when mapping evidence). */
+  chapter: ChapterDoc;
+  sectionRowIndex: number;
+  chunkSpan: ClientChunkSpan | undefined;
+  onEvidenceHighlightClick?: (sectionId: string, detail: { key: string; source: string }) => void;
+  /** Register scroll-to-highlight for story panel navigation */
+  onRegisterEvidenceScroller?: (
+    sectionId: string,
+    scrollTo: (evidenceKey: string) => void,
+  ) => (() => void) | void;
+  saveDisabled?: boolean;
 }
 
 export function Section({
@@ -75,14 +87,21 @@ export function Section({
   onSplit,
   onReanalyze,
   reanalyzeDisabled = false,
+  chapter,
+  sectionRowIndex,
+  chunkSpan,
+  onEvidenceHighlightClick,
+  onRegisterEvidenceScroller,
+  saveDisabled = false,
 }: SectionProps) {
   const g = section.graphAdvice;
   const [criticOpen, setCriticOpen] = useState(false);
   const [defenseOpen, setDefenseOpen] = useState(false);
   const [judgmentOpen, setJudgmentOpen] = useState(true);
+  const [summaryOpen, setSummaryOpen] = useState(false);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !saveDisabled) {
       onToggleEdit(section.id, false);
     }
   };
@@ -98,6 +117,38 @@ export function Section({
   const coach = section.quickCoach;
   const legacyFeedback = section.feedback;
   const words = countWords(section.content);
+  const hasSummaryPanel =
+    !isFocusMode &&
+    (Boolean(g) ||
+      section.status === 'submitting' ||
+      (section.status === 'coached' && Boolean(coach || legacyFeedback)));
+
+  const { highlights, anyStale } = useMemo(() => {
+    if (!chunkSpan) return { highlights: [], anyStale: false };
+    return buildEditorHighlightsForSection(section.content, chapter, sectionRowIndex, chunkSpan, g);
+  }, [section.content, chapter, sectionRowIndex, chunkSpan, g]);
+
+  useEffect(() => {
+    if (!onRegisterEvidenceScroller || !chunkSpan) return undefined;
+    const cleanup = onRegisterEvidenceScroller(section.id, (evidenceKey) => {
+      const escId =
+        typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+          ? CSS.escape(section.id)
+          : section.id;
+      const escKey =
+        typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+          ? CSS.escape(evidenceKey)
+          : evidenceKey;
+      const root = document.querySelector(`[data-section-chunk-id="${escId}"]`);
+      const el = root?.querySelector(`[data-evidence-key="${escKey}"]`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    return typeof cleanup === 'function' ? cleanup : undefined;
+  }, [onRegisterEvidenceScroller, section.id, chunkSpan, highlights]);
+
+  useEffect(() => {
+    if (section.status === 'submitting') setSummaryOpen(true);
+  }, [section.status]);
 
   return (
     <motion.div
@@ -106,6 +157,7 @@ export function Section({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.95 }}
       className="group relative mb-12 overflow-visible"
+      data-section-chunk-id={section.id}
     >
       <div
         className={cn(
@@ -131,6 +183,12 @@ export function Section({
               editable={section.isEditing}
               onKeyDown={handleKeyDown}
               onPasteSceneSplit={(parts) => onSplit(section.id, parts)}
+              evidenceHighlights={highlights}
+              onEvidenceHighlightClick={
+                onEvidenceHighlightClick
+                  ? (d) => onEvidenceHighlightClick(section.id, d)
+                  : undefined
+              }
             />
 
             {section.isEditing ? (
@@ -144,11 +202,12 @@ export function Section({
                     e.stopPropagation();
                     onToggleEdit(section.id, false);
                   }}
-                  className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-ink text-paper text-sm font-sans font-medium hover:bg-ink/90 transition-colors"
+                  className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-ink text-paper text-sm font-sans font-medium hover:bg-ink/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                   type="button"
+                  disabled={saveDisabled}
                 >
-                  <Check size={16} />
-                  Save Section
+                  {saveDisabled ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+                  {saveDisabled ? 'Saving…' : 'Save Section'}
                 </button>
               </div>
             ) : (
@@ -267,116 +326,130 @@ export function Section({
             </span>
           </div>
 
+          {anyStale && g && !section.isEditing ? (
+            <p className="text-[11px] font-sans text-amber-700 dark:text-amber-200/90 px-2">
+              Some graph evidence no longer matches this text (edited since analysis). Re-run Submit All to refresh
+              highlights.
+            </p>
+          ) : null}
+
           <AnimatePresence>
-            {!isFocusMode &&
-              (g ||
-                section.status === 'submitting' ||
-                (section.status === 'coached' && (coach || legacyFeedback))) && (
+            {hasSummaryPanel && (
                 <motion.div
                   initial={{ opacity: 0, height: 0, y: -8 }}
                   animate={{ opacity: 1, height: 'auto', y: 0 }}
                   exit={{ opacity: 0, height: 0 }}
                   className="rounded-2xl border border-border bg-surface/80 shadow-sm p-4 sm:p-5 space-y-3"
                 >
-                  {(g || section.status === 'submitting') && (
-                    <div className="flex items-center gap-2 text-xs font-sans font-semibold text-ink-light uppercase tracking-wider">
+                  <button
+                    type="button"
+                    onClick={() => setSummaryOpen((v) => !v)}
+                    className="w-full flex items-center justify-between gap-2 text-xs font-sans font-semibold text-ink-light uppercase tracking-wider hover:text-ink transition-colors"
+                    aria-expanded={summaryOpen}
+                  >
+                    <span className="flex items-center gap-2">
                       <Sparkles size={14} className="text-accent shrink-0" />
                       Section summary
-                    </div>
-                  )}
+                    </span>
+                    <ChevronDown className={cn('h-4 w-4 shrink-0 transition-transform', summaryOpen && 'rotate-180')} />
+                  </button>
 
-                  {section.status === 'submitting' && (
-                    <div className="flex items-center gap-3 text-sm font-sans text-accent">
-                      <Loader2 size={16} className="animate-spin shrink-0" />
-                      <span>Quick coach is thinking…</span>
-                    </div>
-                  )}
-
-                  {g && (
+                  {summaryOpen && (
                     <>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span
-                          className={cn(
-                            'inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide',
-                            decisionBadgeClass(g.decision),
+                      {section.status === 'submitting' && (
+                        <div className="flex items-center gap-3 text-sm font-sans text-accent">
+                          <Loader2 size={16} className="animate-spin shrink-0" />
+                          <span>Quick coach is thinking…</span>
+                        </div>
+                      )}
+
+                      {g && (
+                        <>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span
+                              className={cn(
+                                'inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide',
+                                decisionBadgeClass(g.decision),
+                              )}
+                            >
+                              {g.decision || '—'}
+                            </span>
+                            <span className="text-xs font-sans text-ink-light tabular-nums">
+                              severity {Number.isFinite(g.severity) ? g.severity.toFixed(2) : '—'}
+                            </span>
+                          </div>
+                          {g.guidance?.trim() ? (
+                            <p className="text-sm font-sans text-ink leading-relaxed whitespace-pre-wrap">{g.guidance}</p>
+                          ) : null}
+                          {g.core_issue?.trim() ? (
+                            <p className="text-xs font-sans text-ink-light leading-relaxed">
+                              <span className="font-medium text-ink">Core issue:</span> {g.core_issue}
+                            </p>
+                          ) : null}
+                          {(g.emotionalRegister || g.narrativeIntent) && (
+                            <div className="flex flex-col gap-3 pt-3 mt-3 border-t border-border/40">
+                              {g.emotionalRegister ? (
+                                <div>
+                                  <h4 className="text-[10px] font-sans font-semibold text-ink-light uppercase tracking-wider mb-1">
+                                    Emotional Register
+                                  </h4>
+                                  <p className="text-sm font-sans text-ink leading-relaxed">
+                                    {g.emotionalRegister}
+                                  </p>
+                                </div>
+                              ) : null}
+                              {g.narrativeIntent ? (
+                                <div>
+                                  <h4 className="text-[10px] font-sans font-semibold text-ink-light uppercase tracking-wider mb-1">
+                                    Narrative Intent
+                                  </h4>
+                                  <p className="text-sm font-sans text-ink leading-relaxed">
+                                    {g.narrativeIntent}
+                                  </p>
+                                </div>
+                              ) : null}
+                            </div>
                           )}
-                        >
-                          {g.decision || '—'}
-                        </span>
-                        <span className="text-xs font-sans text-ink-light tabular-nums">
-                          severity {Number.isFinite(g.severity) ? g.severity.toFixed(2) : '—'}
-                        </span>
-                      </div>
-                      {g.guidance?.trim() ? (
-                        <p className="text-sm font-sans text-ink leading-relaxed whitespace-pre-wrap">{g.guidance}</p>
-                      ) : null}
-                      {g.core_issue?.trim() ? (
-                        <p className="text-xs font-sans text-ink-light leading-relaxed">
-                          <span className="font-medium text-ink">Core issue:</span> {g.core_issue}
-                        </p>
-                      ) : null}
-                      {(g.emotionalRegister || g.narrativeIntent) && (
-                        <div className="flex flex-col gap-3 pt-3 mt-3 border-t border-border/40">
-                          {g.emotionalRegister ? (
-                            <div>
-                              <h4 className="text-[10px] font-sans font-semibold text-ink-light uppercase tracking-wider mb-1">
-                                Emotional Register
-                              </h4>
-                              <p className="text-sm font-sans text-ink leading-relaxed">
-                                {g.emotionalRegister}
-                              </p>
-                            </div>
-                          ) : null}
-                          {g.narrativeIntent ? (
-                            <div>
-                              <h4 className="text-[10px] font-sans font-semibold text-ink-light uppercase tracking-wider mb-1">
-                                Narrative Intent
-                              </h4>
-                              <p className="text-sm font-sans text-ink leading-relaxed">
-                                {g.narrativeIntent}
-                              </p>
-                            </div>
-                          ) : null}
+                        </>
+                      )}
+
+                      {section.status === 'coached' && (coach || legacyFeedback) && (
+                        <div className={cn('flex gap-3', g ? 'pt-2 border-t border-border/60' : '')}>
+                          <div className="mt-0.5 text-accent bg-surface p-1.5 rounded-full shadow-sm h-fit shrink-0">
+                            <MessageSquare size={16} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h4 className="text-xs font-sans font-semibold text-accent uppercase tracking-wider mb-1">
+                              Quick coach
+                            </h4>
+                            {coach ? (
+                              <>
+                                {coach.headline ? (
+                                  <p className="font-sans text-sm font-medium text-ink mb-2">{coach.headline}</p>
+                                ) : null}
+                                {coach.bullets?.length ? (
+                                  <ul className="list-disc pl-4 space-y-1 text-sm text-ink-light">
+                                    {coach.bullets.map((b, i) => (
+                                      <li key={i}>{b}</li>
+                                    ))}
+                                  </ul>
+                                ) : null}
+                                {coach.try_next ? (
+                                  <p className="mt-2 text-sm text-ink-light">
+                                    <span className="font-medium text-ink">Try next:</span> {coach.try_next}
+                                  </p>
+                                ) : null}
+                              </>
+                            ) : (
+                              <p className="font-sans text-sm text-ink-light leading-relaxed">{legacyFeedback}</p>
+                            )}
+                          </div>
                         </div>
                       )}
                     </>
                   )}
-
-                  {section.status === 'coached' && (coach || legacyFeedback) && (
-                    <div className={cn('flex gap-3', g ? 'pt-2 border-t border-border/60' : '')}>
-                      <div className="mt-0.5 text-accent bg-surface p-1.5 rounded-full shadow-sm h-fit shrink-0">
-                        <MessageSquare size={16} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h4 className="text-xs font-sans font-semibold text-accent uppercase tracking-wider mb-1">
-                          Quick coach
-                        </h4>
-                        {coach ? (
-                          <>
-                            {coach.headline ? (
-                              <p className="font-sans text-sm font-medium text-ink mb-2">{coach.headline}</p>
-                            ) : null}
-                            {coach.bullets?.length ? (
-                              <ul className="list-disc pl-4 space-y-1 text-sm text-ink-light">
-                                {coach.bullets.map((b, i) => (
-                                  <li key={i}>{b}</li>
-                                ))}
-                              </ul>
-                            ) : null}
-                            {coach.try_next ? (
-                              <p className="mt-2 text-sm text-ink-light">
-                                <span className="font-medium text-ink">Try next:</span> {coach.try_next}
-                              </p>
-                            ) : null}
-                          </>
-                        ) : (
-                          <p className="font-sans text-sm text-ink-light leading-relaxed">{legacyFeedback}</p>
-                        )}
-                      </div>
-                    </div>
-                  )}
                 </motion.div>
-              )}
+            )}
           </AnimatePresence>
         </div>
 

@@ -2,6 +2,17 @@ import type { ChapterDoc, ProjectMetadata } from './api';
 
 export const DRAFT_VERSION = 1 as const;
 
+/**
+ * Section `submitting` is an in-memory request flag. It must never survive hydration:
+ * a timed-out quick coach + debounced save can persist it to localStorage and strand the UI.
+ */
+export function clearTransientSectionStatuses(chapters: ChapterDoc[]): ChapterDoc[] {
+  return chapters.map((ch) => ({
+    ...ch,
+    rows: ch.rows.map((r) => (r.status === 'submitting' ? { ...r, status: 'draft' as const } : r)),
+  }));
+}
+
 export const PENDING_DRAFT_KEY = 'editr:draft:pending';
 
 export interface DraftPayload {
@@ -36,6 +47,14 @@ export function saveDraft(documentId: string, payload: DraftPayload): void {
     localStorage.setItem(draftStorageKey(documentId), JSON.stringify(payload));
   } catch {
     /* quota / private mode */
+  }
+}
+
+export function clearDraft(documentId: string): void {
+  try {
+    localStorage.removeItem(draftStorageKey(documentId));
+  } catch {
+    /* ignore */
   }
 }
 

@@ -18,6 +18,8 @@ RUN mkdir -p /app/data /app/static
 
 COPY pyproject.toml README.md ./
 COPY src ./src
+# Inkblot / pet soul defaults to repo-root docs/pet (see EDITR_PET_SOUL_DIR)
+COPY docs/pet ./docs/pet
 RUN pip install --no-cache-dir ".[api,mcp]"
 
 COPY --from=frontend /fe/dist/ /app/static/

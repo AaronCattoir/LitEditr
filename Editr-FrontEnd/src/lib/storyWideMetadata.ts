@@ -84,7 +84,11 @@ export function mergeMetadataFromAnalysisReport(m: ProjectMetadata, report: Edit
       .filter(Boolean);
   }
   if (typeof gi.short_story_single_chapter === 'boolean') {
-    fromRun.shortStorySingleChapter = gi.short_story_single_chapter;
+    // Preserve an explicit editor toggle during save/fallback refresh flows.
+    // We only adopt `false` from run metadata when the local value is unset.
+    if (gi.short_story_single_chapter || typeof m.shortStorySingleChapter !== 'boolean') {
+      fromRun.shortStorySingleChapter = gi.short_story_single_chapter;
+    }
   }
 
   return { ...base, ...fromRun };

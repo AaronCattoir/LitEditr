@@ -28,6 +28,28 @@
   --color-overlay-val: rgba(0, 0, 0, 0.03);
 }
 
+/* Inline graph evidence highlights (ProseMirror decorations; not persisted in markdown) */
+.editr-evidence-highlight {
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, box-shadow 0.15s ease;
+}
+.editr-evidence-highlight:hover {
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+.dark .editr-evidence-highlight:hover {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+.editr-evidence-critic {
+  background-color: rgba(244, 63, 94, 0.14);
+}
+.editr-evidence-defense {
+  background-color: rgba(16, 185, 129, 0.14);
+}
+.editr-evidence-judgment {
+  background-color: rgba(245, 158, 11, 0.16);
+}
+
 .dark {
   --color-paper-val: #1a1918;
   --color-ink-val: #e8e6e3;

@@ -280,7 +280,7 @@ def build_context_window(
 
 
 def run_chunker(state: dict[str, Any]) -> dict[str, Any]:
-    """LangGraph node: run LLM narrative chunker on raw document."""
+    """Pipeline step: run LLM narrative chunker on raw document."""
     raw = state.get("raw_document")
     if not raw:
         text = state.get("document_text", "")
@@ -311,7 +311,7 @@ def run_chunker(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def run_context_builder(state: dict[str, Any]) -> dict[str, Any]:
-    """LangGraph node: for current_chunk_id, build context window. Expects chunks + optional global_summary."""
+    """Pipeline step: for current_chunk_id, build context window. Expects chunks + optional global_summary."""
     chunks = state.get("chunks", [])
     chunk_id = state.get("current_chunk_id")
     global_summary = state.get("global_summary", "")

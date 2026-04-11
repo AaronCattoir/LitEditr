@@ -57,7 +57,7 @@ def serialize_story_wide_for_api(ds: DocumentState) -> dict[str, Any]:
 
 
 class RunStore:
-    """SQLite implementation of RunStoreInterface."""
+    """SQLite-backed persistence for run metadata, chunk artifacts, and document state."""
 
     def __init__(self, conn: Any) -> None:
         self._conn = conn

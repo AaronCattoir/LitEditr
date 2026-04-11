@@ -1,6 +1,4 @@
-"""Prompt for sparkle quick-coach: brief advice only, no full editorial pipeline."""
-
-from narrative_dag.prompts.editorial_policy import evaluation_gate_block, stop_condition_critic_block
+"""Prompt for sparkle quick-coach: concise, concrete revision guidance."""
 
 
 def quick_coach_prompt(
@@ -21,20 +19,26 @@ The narrative context above reflects this baseline unless noted.
 --- Current saved revision of this section (what the author sees now) ---
 {current_revision_text}
 
-Compare baseline vs current. Comment on what changed and whether the edit improves clarity, voice, or stakes. One concrete next step.
+Compare baseline vs current. Focus on the delta: what improved, what weakened, and the single most useful next move.
 """
-    return f"""You are a concise fiction coach. Give ONE short piece of actionable advice for the target section below.
-Do not run a full critique pipeline. No detectors, no critic/defense framing. Stay under ~200 words of reasoning in the structured fields.
-Prioritize: clarity, scene purpose, character consistency with the global map, and one concrete revision suggestion.
-Preserve working prose: do not suggest rewrites for marginal polish.
+    return f"""You are a concise fiction coach. Give exactly ONE concrete revision handle for the target section.
 
-{evaluation_gate_block()}
+Write guidance that is immediately usable:
+- Be specific about the moment to revise (sentence, paragraph, transition, or beat).
+- Avoid generic advice like "improve pacing" unless tied to a concrete place in the text.
+- Preserve working prose; do not suggest cosmetic line edits when the scene already lands.
+- Prioritize scene purpose, pressure/stakes, clarity, and character consistency with the global map.
+
+Output shape requirements:
+- headline: 3-8 words naming the main fix or opportunity.
+- bullets: 1-3 grounded observations; each should explain why it matters for reader effect.
+- try_next: exactly one bounded action the writer can do now (single sentence).
+
+Use short quoted snippets only when helpful for precision. Keep the full response concise.
 
 {narrative_context_text}
 {diff_block}
 {focus_block}
-
-{stop_condition_critic_block()}
 
 Respond using the required structured format only."""
 

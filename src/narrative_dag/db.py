@@ -19,6 +19,15 @@ def get_connection(db_path: str) -> sqlite3.Connection:
         conn.execute("PRAGMA foreign_keys = ON")
     except sqlite3.Error:
         pass
+    # Reduce "database is locked" under concurrent readers/writers (local API + background jobs).
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.Error:
+        pass
+    try:
+        conn.execute("PRAGMA busy_timeout=8000")
+    except sqlite3.Error:
+        pass
     return conn
 
 
@@ -339,6 +348,83 @@ def run_migrations(conn: sqlite3.Connection) -> None:
     cur.execute(
         "CREATE INDEX IF NOT EXISTS idx_document_chapters_doc ON document_chapters(document_id, sort_order)"
     )
+
+    # Story persona (inkblot): snapshots and append-only events
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS story_persona_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id TEXT NOT NULL,
+            revision_id TEXT,
+            version INTEGER NOT NULL,
+            state TEXT NOT NULL DEFAULT 'bootstrap',
+            deterministic_json TEXT NOT NULL DEFAULT '{}',
+            llm_snapshot_json TEXT,
+            pet_style_policy_json TEXT,
+            soul_seed_path TEXT,
+            soul_seed_hash TEXT,
+            source_run_id TEXT,
+            timbre_delta_json TEXT,
+            input_hash TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(document_id, version)
+        )
+    """)
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_story_persona_doc ON story_persona_snapshots(document_id, version DESC)"
+    )
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS story_persona_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            source_kind TEXT NOT NULL,
+            source_id TEXT,
+            revision_id TEXT,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_story_persona_events_doc ON story_persona_events(document_id, created_at)")
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS story_chat_sessions (
+            session_id TEXT PRIMARY KEY,
+            document_id TEXT NOT NULL,
+            revision_id TEXT,
+            persona_version INTEGER,
+            session_summary TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_story_chat_sessions_doc ON story_chat_sessions(document_id, updated_at DESC)")
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS story_chat_turns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            turn_index INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            context_manifest_json TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(session_id, turn_index),
+            FOREIGN KEY (session_id) REFERENCES story_chat_sessions(session_id)
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_story_chat_turns_session ON story_chat_turns(session_id, turn_index)")
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS story_inkblot_memory (
+            document_id TEXT PRIMARY KEY,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    add_column_if_missing(conn, "async_jobs", "input_hash", "TEXT")
+    add_column_if_missing(conn, "async_jobs", "output_persona_version", "INTEGER")
 
     conn.commit()
 

@@ -24,6 +24,7 @@ from narrative_dag.config import (
     DEFAULT_LLM_PROVIDER_JUDGMENT,
     DEFAULT_LLM_PROVIDER_QUICK_COACH,
     DEFAULT_LLM_TEMPERATURE,
+    DEFAULT_LLM_TIMEOUT_S,
     DEFAULT_OPENAI_FAST_MODEL,
     DEFAULT_OPENAI_MODEL,
     DEFAULT_OPENAI_PRO_MODEL,
@@ -232,6 +233,7 @@ def get_llm(
     """Return a chat model instance for the configured provider."""
     selected_provider = (provider or _resolve_stage_provider(stage)).strip().lower()
     selected_temperature = DEFAULT_LLM_TEMPERATURE if temperature is None else temperature
+    selected_timeout = DEFAULT_LLM_TIMEOUT_S
 
     resolved_model = model or _resolve_stage_model(selected_provider, stage)
 
@@ -244,6 +246,7 @@ def get_llm(
             model=resolved_model or DEFAULT_GEMINI_MODEL,
             temperature=selected_temperature,
             max_retries=6,
+            timeout=selected_timeout,
             google_api_key=api_key,
         )
 
@@ -255,6 +258,7 @@ def get_llm(
             model=resolved_model or DEFAULT_OPENAI_MODEL,
             temperature=selected_temperature,
             max_retries=2,
+            timeout=selected_timeout,
         )
 
     if selected_provider == "vertex":

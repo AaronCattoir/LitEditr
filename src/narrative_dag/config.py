@@ -63,11 +63,29 @@ DEFAULT_VERTEX_FAST_MODEL = os.getenv("VERTEX_FAST_MODEL", "gemini-3.1-flash")
 DEFAULT_VERTEX_PRO_MODEL = os.getenv("VERTEX_PRO_MODEL", DEFAULT_VERTEX_MODEL)
 DEFAULT_OPENAI_FAST_MODEL = os.getenv("OPENAI_FAST_MODEL", "gpt-5.4-mini")
 DEFAULT_OPENAI_PRO_MODEL = os.getenv("OPENAI_PRO_MODEL", "gpt-5.4")
+# Per-request LLM timeout (seconds) to prevent indefinite stalls.
+DEFAULT_LLM_TIMEOUT_S = float(os.getenv("LLM_TIMEOUT_S", "90"))
 
 # Quick coach: block when |len(current) - len(analyzed)| exceeds this derived cap
 QUICK_COACH_OOB_RATIO = float(os.getenv("QUICK_COACH_OOB_RATIO", "0.3"))
 QUICK_COACH_OOB_MIN_CHARS = int(os.getenv("QUICK_COACH_OOB_MIN_CHARS", "120"))
 QUICK_COACH_OOB_MAX_CHARS = int(os.getenv("QUICK_COACH_OOB_MAX_CHARS", "1200"))
+
+# Story persona (inkblot): first materialization thresholds
+PERSONA_MIN_ANALYZED_WORDS = int(os.getenv("PERSONA_MIN_ANALYZED_WORDS", "1200"))
+PERSONA_MIN_ANALYZED_CHUNKS = int(os.getenv("PERSONA_MIN_ANALYZED_CHUNKS", "3"))
+PERSONA_PARTIAL_REFRESH_MIN_WORD_DELTA = int(os.getenv("PERSONA_PARTIAL_REFRESH_MIN_WORD_DELTA", "300"))
+
+# Story chat explicit context
+STORY_CHAT_MAX_WORDS_DEFAULT = int(os.getenv("STORY_CHAT_MAX_WORDS_DEFAULT", "5000"))
+STORY_CHAT_ACTIVE_TURNS = int(os.getenv("STORY_CHAT_ACTIVE_TURNS", "20"))
+
+# Inkblot document memory: batch merge every N real (non–quick-coach) user turns
+INKBLOT_MEMORY_BATCH_USER_TURNS = int(os.getenv("INKBLOT_MEMORY_BATCH_USER_TURNS", "5"))
+# Persona paragraph digest: schedule on same cadence (debounced async job)
+INKBLOT_PERSONA_DIGEST_USER_TURNS = int(os.getenv("INKBLOT_PERSONA_DIGEST_USER_TURNS", "5"))
+# Max transcript chars for close-summary / batch prompts (truncate deterministically)
+INKBLOT_MEMORY_TRANSCRIPT_MAX_CHARS = int(os.getenv("INKBLOT_MEMORY_TRANSCRIPT_MAX_CHARS", "48000"))
 
 # Chunking / context safety
 CHUNKER_MAX_ONE_SHOT_CHARS = int(os.getenv("CHUNKER_MAX_ONE_SHOT_CHARS", "12000"))

@@ -185,6 +185,18 @@ class DocumentStore:
         )
         return {row[1]: row[0] for row in cur.fetchall()}
 
+    def list_chunk_business_ids_ordered(self, revision_id: str) -> list[tuple[str, int]]:
+        """Return (chunk_business_id, position) for current chunk rows, ordered by position."""
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT chunk_business_id, position FROM chunk_versions
+            WHERE revision_id = ? AND is_current = 1 ORDER BY position ASC
+            """,
+            (revision_id,),
+        )
+        return [(str(r[0]), int(r[1])) for r in cur.fetchall()]
+
     def get_revision_chunk_text(self, revision_id: str, chunk_business_id: str) -> str | None:
         """Slice current revision full_text using chunk_versions span; None if missing."""
         rev = self.get_revision(revision_id)
@@ -429,6 +441,82 @@ class DocumentStore:
         cur.execute("DELETE FROM document_chapters WHERE chapter_id = ?", (chapter_id,))
         self._conn.commit()
         return cur.rowcount > 0
+
+    def delete_document(self, document_id: str) -> bool:
+        """Remove a document and dependent rows (revisions, runs, persona, story chat, jobs)."""
+        if not self.document_exists(document_id):
+            return False
+        cur = self._conn.cursor()
+
+        def _ph(n: int) -> str:
+            return ",".join("?" * n)
+
+        cur.execute("SELECT revision_id FROM document_revisions WHERE document_id = ?", (document_id,))
+        revision_ids = [str(r[0]) for r in cur.fetchall()]
+
+        cur.execute("SELECT run_id FROM runs WHERE document_id = ?", (document_id,))
+        run_ids = [str(r[0]) for r in cur.fetchall()]
+
+        job_conds: list[str] = ["document_id = ?"]
+        job_params: list[Any] = [document_id]
+        if revision_ids:
+            job_conds.append(f"revision_id IN ({_ph(len(revision_ids))})")
+            job_params.extend(revision_ids)
+        if run_ids:
+            job_conds.append(f"run_id IN ({_ph(len(run_ids))})")
+            job_params.extend(run_ids)
+        cur.execute(f"DELETE FROM async_jobs WHERE {' OR '.join(job_conds)}", job_params)
+
+        if run_ids:
+            rq = _ph(len(run_ids))
+            cur.execute(f"DELETE FROM chat_turns WHERE run_id IN ({rq})", run_ids)
+            cur.execute(f"DELETE FROM judgment_versions WHERE run_id IN ({rq})", run_ids)
+            cur.execute(f"DELETE FROM run_chunks WHERE run_id IN ({rq})", run_ids)
+            cur.execute(f"DELETE FROM run_document_state WHERE run_id IN ({rq})", run_ids)
+            cur.execute(f"DELETE FROM runs WHERE run_id IN ({rq})", run_ids)
+
+        if revision_ids:
+            rq = _ph(len(revision_ids))
+            cur.execute(f"DELETE FROM chat_turns WHERE revision_id IN ({rq})", revision_ids)
+
+            cur.execute(f"SELECT id FROM chunk_versions WHERE revision_id IN ({rq})", revision_ids)
+            cv_ids = [int(r[0]) for r in cur.fetchall()]
+            if cv_ids:
+                cq = _ph(len(cv_ids))
+                cur.execute(f"DELETE FROM bridge_chunk_character WHERE chunk_version_id IN ({cq})", cv_ids)
+                cur.execute(f"DELETE FROM bridge_chunk_motif WHERE chunk_version_id IN ({cq})", cv_ids)
+
+            cur.execute(f"DELETE FROM chunk_versions WHERE revision_id IN ({rq})", revision_ids)
+            cur.execute(f"DELETE FROM dim_chapter WHERE revision_id IN ({rq})", revision_ids)
+            cur.execute(f"DELETE FROM dim_section WHERE revision_id IN ({rq})", revision_ids)
+            cur.execute(f"DELETE FROM analytic_facts WHERE revision_id IN ({rq})", revision_ids)
+
+        cur.execute("SELECT id FROM revision_events WHERE document_id = ?", (document_id,))
+        event_ids = [int(r[0]) for r in cur.fetchall()]
+        if event_ids:
+            eq = _ph(len(event_ids))
+            cur.execute(f"DELETE FROM restore_jobs WHERE revision_event_id IN ({eq})", event_ids)
+
+        cur.execute("DELETE FROM revision_events WHERE document_id = ?", (document_id,))
+        cur.execute("DELETE FROM user_bookmarks WHERE document_id = ?", (document_id,))
+        cur.execute("DELETE FROM document_chapters WHERE document_id = ?", (document_id,))
+        cur.execute("DELETE FROM story_persona_snapshots WHERE document_id = ?", (document_id,))
+        cur.execute("DELETE FROM story_persona_events WHERE document_id = ?", (document_id,))
+        cur.execute("DELETE FROM story_inkblot_memory WHERE document_id = ?", (document_id,))
+
+        cur.execute("SELECT session_id FROM story_chat_sessions WHERE document_id = ?", (document_id,))
+        session_ids = [str(r[0]) for r in cur.fetchall()]
+        if session_ids:
+            sq = _ph(len(session_ids))
+            cur.execute(f"DELETE FROM story_chat_turns WHERE session_id IN ({sq})", session_ids)
+        cur.execute("DELETE FROM story_chat_sessions WHERE document_id = ?", (document_id,))
+
+        cur.execute("DELETE FROM dim_character WHERE document_id = ?", (document_id,))
+        cur.execute("DELETE FROM dim_motif WHERE document_id = ?", (document_id,))
+        cur.execute("DELETE FROM document_revisions WHERE document_id = ?", (document_id,))
+        cur.execute("DELETE FROM documents WHERE document_id = ?", (document_id,))
+        self._conn.commit()
+        return True
 
     def get_document_id_for_chapter(self, chapter_id: str) -> str | None:
         cur = self._conn.cursor()

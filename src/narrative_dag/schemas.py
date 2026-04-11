@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # --- Top-level inputs ---
@@ -207,9 +207,28 @@ class DocumentState(BaseModel):
 
 class DriftResult(BaseModel):
     drift_score: float = 0.0
-    drift_type: Literal["tone", "syntax", "psychological", ""] = ""
+    drift_type: Literal["tone", "syntax", "psychological", "narrative", ""] = ""
     evidence: str = ""
     confidence: float = 0.0
+
+    @field_validator("drift_type", mode="before")
+    @classmethod
+    def normalize_drift_type(cls, v: Any) -> str:
+        """Map model paraphrases (e.g. 'narrative architecture') onto allowed literals."""
+        if v is None or v == "":
+            return ""
+        s = str(v).strip().lower().replace("-", " ").replace("_", " ")
+        if s in ("tone", "syntax", "psychological", "narrative"):
+            return s
+        if "narrative" in s or "scene" in s and "architecture" in s:
+            return "narrative"
+        if "psychological" in s or (s.startswith("psych") and "syntax" not in s):
+            return "psychological"
+        if "syntax" in s:
+            return "syntax"
+        if "tone" in s:
+            return "tone"
+        return ""
 
 
 class ClicheResult(BaseModel):
@@ -250,6 +269,18 @@ class EvidenceSpan(BaseModel):
     label: str = ""
 
 
+class SpanSynthesis(BaseModel):
+    quote: str = Field(..., description="The exact verbatim text span from the chunk.")
+    critic_blurb: str = Field(..., description="One short, plain language sentence synthesizing the critic's point.")
+    advocate_blurb: str = Field(..., description="One short, plain language sentence synthesizing the advocate/defense point.")
+    start_char: int = 0
+    end_char: int = 0
+
+
+class EvidenceSynthesisResult(BaseModel):
+    spans: list[SpanSynthesis] = Field(default_factory=list)
+
+
 # --- Conflict layer ---
 
 
@@ -258,6 +289,24 @@ class CriticResult(BaseModel):
     failure_points: list[str] = Field(default_factory=list)
     verdict: Literal["fail", "weak", "borderline"] = "borderline"
     evidence_spans: list[EvidenceSpan] = Field(default_factory=list)
+
+    @field_validator("verdict", mode="before")
+    @classmethod
+    def normalize_verdict(cls, v: Any) -> str:
+        if v is None:
+            return "borderline"
+        s = str(v).strip().lower().replace("_", " ").replace("-", " ")
+        if s in {"fail", "weak", "borderline"}:
+            return s
+        # Prompt currently uses "working"; keep schema stable and coerce to nearest
+        # existing bucket so we do not raise validation errors in production runs.
+        if s in {"working", "works", "pass", "ok", "good"}:
+            return "borderline"
+        if "fail" in s or "broken" in s:
+            return "fail"
+        if "weak" in s or "undersell" in s:
+            return "weak"
+        return "borderline"
 
 
 class DefenseResult(BaseModel):
@@ -300,6 +349,7 @@ class ChunkJudgmentEntry(BaseModel):
     elasticity: ElasticityResult | None = None
     critic_result: CriticResult | None = None
     defense_result: DefenseResult | None = None
+    evidence_synthesis: EvidenceSynthesisResult | None = None
 
 
 class EditorialReport(BaseModel):
@@ -342,45 +392,65 @@ class QuickCoachAdvice(BaseModel):
     try_next: str | None = None
 
 
-class ChatTurn(BaseModel):
-    """Stored for UX continuity only; not used as model grounding."""
+class InkblotVisualModel(BaseModel):
+    """Generative SVG hints for the Inkblot companion avatar (viewBox 0 0 100 100)."""
 
-    role: Literal["user", "assistant"]
-    content: str
-    chunk_id: str = ""
-    run_id: str = ""
-    judgment_version: int | None = None
+    svg_path_d: str = Field(
+        default="",
+        description="Single SVG path d attribute only; closed symmetric inkblot-like shape inside 0–100 coords",
+    )
+    primary_color: str = Field(
+        default="#6B5B6B",
+        description="Fill or main ink color as #RRGGBB",
+    )
+    secondary_color: str = Field(
+        default="#C4A8B8",
+        description="Accent or highlight as #RRGGBB",
+    )
+    animation_speed: float = Field(
+        default=1.0,
+        ge=0.25,
+        le=3.0,
+        description="Relative motion speed; >1 tenser/faster, <1 calmer/slower",
+    )
 
 
-# --- Graph state (TypedDict for LangGraph) ---
+class InkblotPersonaLLMSnapshot(BaseModel):
+    """LLM-compressed persona layer; advisory only."""
+
+    one_liner: str = Field(default="", description="How the pet relates to this story in one line")
+    alignment_notes: str = Field(default="", description="What the pet should emphasize for this writer")
+    personality_paragraph: str = Field(
+        default="",
+        description="2–3 sentences: Inkblot's voice/presence for this story (advisory; does not override safety)",
+        max_length=2000,
+    )
+    tone_reminders: list[str] = Field(default_factory=list, max_length=8)
+    visual_model: InkblotVisualModel | None = Field(
+        default=None,
+        description="Optional abstract inkblot SVG path + palette for UI avatar",
+    )
 
 
-class GraphState(TypedDict, total=False):
-    """Top-level state keyed by chunk_id with global doc-level cache."""
+class InkblotPersonaParagraphRefresh(BaseModel):
+    """Partial LLM output when only refreshing personality_paragraph (digest job)."""
 
-    run_id: str
-    genre_intention: GenreIntention
-    raw_document: RawDocument
-    chunks: list[Chunk]
-    plot_overview: PlotOverview | None
-    character_database: CharacterDatabase | None
-    global_summary: str
-    current_chunk_id: str
-    context_window: ContextWindow
-    prompt_context: PromptContext
-    paragraph_analysis: ParagraphAnalysis
-    voice_profile: VoiceProfile
-    dialogue_analysis: DialogueAnalysis | None
-    document_state: DocumentState
-    drift_result: DriftResult | None
-    cliche_result: ClicheResult | None
-    vagueness_result: VaguenessResult | None
-    emotional_honesty_result: EmotionalHonestyResult | None
-    redundancy_result: RedundancyResult | None
-    risk_result: RiskResult | None
-    critic_result: CriticResult | None
-    defense_result: DefenseResult | None
-    editor_judgment: EditorJudgment | None
-    elasticity_result: ElasticityResult | None
-    chunk_judgments: list[ChunkJudgmentEntry]
-    editorial_report: EditorialReport | None
+    personality_paragraph: str = Field(default="", max_length=2000)
+
+
+class InkblotMemoryMergeResult(BaseModel):
+    """Incremental batch merge over a segment of story chat (every N inkblot user turns)."""
+
+    schema_version: int = Field(default=1, ge=1)
+    rolling_summary: str = Field(default="", max_length=4000)
+    open_goals: list[str] = Field(default_factory=list, max_length=12)
+    noted_emotions: list[str] = Field(default_factory=list, max_length=12)
+
+
+class InkblotMemoryCloseSummary(BaseModel):
+    """Full-session extraction when the user closes the chat panel."""
+
+    schema_version: int = Field(default=1, ge=1)
+    session_point: str = Field(default="", max_length=2000)
+    session_goals: list[str] = Field(default_factory=list, max_length=12)
+    session_emotions: list[str] = Field(default_factory=list, max_length=12)

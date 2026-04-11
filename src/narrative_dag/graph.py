@@ -1,12 +1,11 @@
-"""Top-level StateGraph wiring: ingestion -> representation -> detection -> conflict -> judgment -> report."""
+"""Full-document analysis orchestration: chunking, global context, then per-chunk pipeline (imperative loop)."""
 
 from __future__ import annotations
 
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
-
-from langgraph.graph import END, StateGraph
 
 import narrative_dag.llm as llm_runtime
 from narrative_dag.llm import RunLLMBundle
@@ -23,6 +22,7 @@ from narrative_dag.nodes.conflict import critic_agent, defense_agent
 from narrative_dag.nodes.judgment import (
     editor_judge,
     elasticity_evaluator,
+    evidence_synthesizer,
     report_collector,
     build_chunk_judgment_entry,
 )
@@ -43,39 +43,6 @@ def _replay_representation_for_chunk(base: dict[str, Any], ch: Chunk) -> dict[st
     st = {**st, **voice_profiler(st)}
     st = {**st, **run_document_state_builder(st)}
     return st
-
-
-def build_chunk_pipeline_graph():
-    """Build the per-chunk pipeline: context -> analysis -> document_state -> detectors -> critic -> defense -> judge -> elasticity."""
-    builder = StateGraph(dict)
-
-    builder.add_node("context_builder", run_context_builder)
-    builder.add_node("paragraph_analyzer", paragraph_analyzer)
-    builder.add_node("voice_profiler", voice_profiler)
-    builder.add_node("document_state_builder", run_document_state_builder)
-    builder.add_node("detectors", run_all_detectors)
-    builder.add_node("critic", critic_agent)
-    builder.add_node("defense", defense_agent)
-    builder.add_node("editor_judge", editor_judge)
-    builder.add_node("elasticity", elasticity_evaluator)
-
-    builder.set_entry_point("context_builder")
-    builder.add_edge("context_builder", "paragraph_analyzer")
-    builder.add_edge("paragraph_analyzer", "voice_profiler")
-    builder.add_edge("voice_profiler", "document_state_builder")
-    builder.add_edge("document_state_builder", "detectors")
-    builder.add_edge("detectors", "critic")
-    builder.add_edge("critic", "defense")
-    builder.add_edge("defense", "editor_judge")
-    builder.add_edge("editor_judge", "elasticity")
-    builder.add_edge("elasticity", END)
-
-    return builder.compile()
-
-
-def build_incremental_chunk_graph():
-    """Same topology as `build_chunk_pipeline_graph`; use when re-running dirty chunks only with state pre-seeded."""
-    return build_chunk_pipeline_graph()
 
 
 def run_analysis(
@@ -136,18 +103,21 @@ def run_analysis(
         return state, []
     _log(f"[1/5] found {len(chunks)} chunks ({time.time()-t0:.1f}s)")
 
-    # 2) Plot overview (global story context)
-    _log("[2/6] building plot overview...")
-    state = {**state, **plot_overview_builder(state)}
+    # 2–3) Plot overview + character database in parallel (wall ~ max of two LLM calls).
+    # character_map_builder reads plot_overview from state; workers start before plot merges, so
+    # plot_summary/story_point in the character prompt are empty for this call (latency vs. prompt).
+    _log("[2/6] plot overview + character database (parallel)...")
+    t_global = time.time()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fut_plot = pool.submit(plot_overview_builder, state)
+        fut_char = pool.submit(character_map_builder, state)
+        plot_out = fut_plot.result()
+        char_out = fut_char.result()
+    state = {**state, **plot_out, **char_out}
     state["global_summary"] = (
         state["plot_overview"].plot_summary if state.get("plot_overview") else ""
     )
-    _log(f"[2/6] plot overview done ({time.time()-t0:.1f}s)")
-
-    # 3) Character map from full document.
-    _log("[3/6] building character database...")
-    state = {**state, **character_map_builder(state)}
-    _log(f"[3/6] character database done ({time.time()-t0:.1f}s)")
+    _log(f"[2/6] plot + character DB wall {time.time() - t_global:.1f}s (total {time.time()-t0:.1f}s)")
 
     # 4) Document state baseline: full run calibrates on first chunk; partial runs may seed from base
     # and replay representation for chunks before the first target so middle inserts see coherent context.
@@ -226,13 +196,28 @@ def run_analysis(
             ("detectors",  run_all_detectors),
             ("critic",     critic_agent),
             ("defense",    defense_agent),
-            ("judge",      editor_judge),
-            ("elasticity", elasticity_evaluator),
         ]
         for step_name, step_fn in steps:
             step_t = time.time()
             st = {**st, **step_fn(st)}
             _log(f"       {step_name} {time.time()-step_t:.1f}s")
+            
+        # Parallel judge and evidence synthesis
+        _log("       judge + evidence synthesis (parallel)...")
+        t_parallel = time.time()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            fut_judge = pool.submit(editor_judge, st)
+            fut_synth = pool.submit(evidence_synthesizer, st)
+            judge_out = fut_judge.result()
+            synth_out = fut_synth.result()
+        st = {**st, **judge_out, **synth_out}
+        _log(f"       judge + synthesis wall {time.time()-t_parallel:.1f}s")
+        
+        # Elasticity
+        step_t = time.time()
+        st = {**st, **elasticity_evaluator(st)}
+        _log(f"       elasticity {time.time()-step_t:.1f}s")
+        
         _log(f"[5/6] chunk {i+1}/{len(chunks)} done ({time.time()-chunk_t0:.1f}s, total {time.time()-t0:.1f}s)")
         judgment = st.get("editor_judgment")
         elasticity = st.get("elasticity_result")
@@ -244,6 +229,7 @@ def run_analysis(
                 elasticity,
                 critic_result=st.get("critic_result"),
                 defense_result=st.get("defense_result"),
+                evidence_synthesis_result=st.get("evidence_synthesis_result"),
             )
             chunk_judgments.append(entry)
         doc_state = st.get("document_state") or doc_state
@@ -272,6 +258,7 @@ def run_analysis(
                 },
                 "critic_result": _dump(st["critic_result"]) if st.get("critic_result") else None,
                 "defense_result": _dump(st["defense_result"]) if st.get("defense_result") else None,
+                "evidence_synthesis_result": _dump(st["evidence_synthesis_result"]) if st.get("evidence_synthesis_result") else None,
                 "character_database": _dump(st["character_database"]) if st.get("character_database") else None,
                 "current_judgment": judgment.model_dump(),
             }

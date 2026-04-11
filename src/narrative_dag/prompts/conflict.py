@@ -18,26 +18,38 @@ def critic_prompt(ctx: PromptContext, detector_snapshot: str) -> str:
         stage_role_block(
             "an objective and incisive editorial critic",
             [
-                """Structure your critique to identify specific, actionable weaknesses in both PROSE-CRAFT and NARRATIVE ARCHITECTURE.
+                """You are not a proofreader. Your job is to determine whether the scene does its job — whether it builds, moves, earns, and lands. Typos are the last thing you care about.
 
 PROSE-CRAFT:
 - Flag dead language, mechanical errors, weak imagery, or rhythm breaks.
 - Cite exact phrases and explain why they weaken the sentence.
 - Distinguish between stylistic intent and actual degradation (do not overcorrect intentional voice).
+- Ask: does the prose do specific work, or is it generic atmospheric filler?
 
-NARRATIVE ARCHITECTURE:
-- Evaluate pacing, escalation, scene movement, and structural clarity.
-- Identify if the scene fails to achieve its intended function (e.g., lacks tension, muddled reveal, static character).
+NARRATIVE ARCHITECTURE — THIS IS THE PRIORITY:
+- Does the scene move? What is the narrative position at start vs. end?
+- Is tension built through specific craft choices, or merely described?
+- Are horror, dread, or emotional pressure constructed on the page — or stated?
+- Does the character's internal state change, deepen, or complicate by the end?
+- Are escalations earned or assumed?
+- Identify if the scene fails to achieve its intended function: lacks tension, muddled reveal, static character, coasting on atmosphere.
+
+BURDEN OF PROOF FOR "DELIBERATE CHOICE":
+- "Deliberate stylistic choice" is not a defense unless it demonstrably creates pressure, payoff, or character.
+- If a choice is labeled deliberate but produces no effect beyond existing, it is not working.
+- Ask: what does this choice DO to the reader? If the answer is "nothing," it is a weakness regardless of intent.
 
 FORCING FUNCTION:
-- Write a clear, direct critique paragraph detailing the most significant issues.
-- Identify the most damaging flaw in the scene and cite evidence.
-- Determine the overall verdict (fail, weak, or borderline).
+- Identify the single most damaging structural or craft failure and cite the specific text.
+- State whether the scene earns its place in the story or coasts.
+- Determine: fail (scene does not function), weak (scene functions but undersells), or working (scene does its job).
+- If working: say so, briefly, and stop. Do not manufacture issues.
 
 CONSTRAINTS:
+- No hedging. No "while this mostly works..." openings.
 - Be specific and cite text directly.
-- Avoid vague platitudes.
-- Do not invent flaws if the text is fundamentally working, but do not ignore genuine weaknesses.""",
+- Do not soften structural failures by pivoting to what works.
+- SCOPE: Your critique must be confined to the TARGET CHUNK only. You may read previous and next context to understand narrative position, but do not critique, recommend cuts to, or render verdicts on any chunk other than the target. Do not reference what should happen in other chunks.""",
             ],
         )
         + "\n"
@@ -61,19 +73,22 @@ def defense_prompt(ctx: PromptContext, detector_snapshot: str, critique: str) ->
                 """Your purpose is to find the merit in the text, push back against the critic's judgments, and advocate for the writer's vision. Act as the text's defense attorney.
 
 DEFENSE STRATEGY:
-- Rebuttal: Address the critic's main argument directly. Reject the premise if they are applying the wrong standard (e.g., judging voice-driven prose by strict grammatical elegance), or argue that perceived "flaws" are actually deliberate stylistic choices.
-- Merit: Highlight the latent emotional resonance or narrative potential in moments the critic dismissed. Point out what actually works on the page.
-- Salvage: If the execution is genuinely flawed, defend the *intent* behind the choice and explain how the underlying instinct could be preserved while fixing the execution.
+- Rebuttal: Address the critic's main argument directly. Reject the premise if they are applying the wrong standard (e.g., judging voice-driven prose by strict grammatical elegance).
+- If you argue a choice is "deliberate," you MUST prove its payoff: explain specifically what effect it creates for the reader, not just that the author chose it.
+- Merit: Point to specific moments that create genuine pressure, reader effect, or structural function — not latent potential, actual execution.
+- Salvage: If the execution is genuinely flawed, concede it cleanly. Defend the intent only if you can show how preserving it produces a better outcome than rewriting.
 
 FORCING FUNCTION:
 - Write a structured, constructive defense paragraph.
-- Identify specific 'valid points' (moments of actual strength) in the text that support your defense.
+- Identify specific 'valid points' (moments of actual strength) in the text, with the effect each creates.
 - Determine the salvageability of the scene (high, medium, or low).
 
 CONSTRAINTS:
+- Do NOT invoke "deliberate choice" or "intentional voice" as a blanket defense. Prove the effect or concede.
 - Do NOT act as a second evaluator or simply agree with the critic.
-- You may concede genuine execution errors, but always pivot to defending the underlying intent.
-- Be specific and cite text directly."""
+- You may concede genuine execution errors; do not defend failures of execution as failures of taste.
+- Be specific and cite text directly.
+- SCOPE: Your defense must be confined to the TARGET CHUNK only. Next context is available for understanding narrative position, not for issuing recommendations about other chunks."""
             ],
         )
         + "\n"

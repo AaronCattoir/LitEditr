@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -136,6 +136,14 @@ class QuickCoachRequest(BaseModel):
         default=None,
         description="LLM backend for quick coach (and analyze jobs queued from sparkle)",
     )
+    story_chat_session_id: str | None = Field(
+        default=None,
+        description="Existing Inkblot story-chat session to append turns to; omit to create a new session",
+    )
+    append_story_chat: bool = Field(
+        default=False,
+        description="When true, persist quick-coach result as user+assistant story-chat turns",
+    )
 
 
 class QuickCoachResponse(BaseModel):
@@ -152,3 +160,67 @@ class QuickCoachResponse(BaseModel):
     threshold_chars: int | None = None
     analyzed_char_len: int | None = None
     current_char_len: int | None = None
+    story_chat_session_id: str | None = None
+    story_chat_appended: bool = False
+
+
+class StoryChatRequest(BaseModel):
+    """Inkblot story chat: explicit chunks or chapter slice; no RAG."""
+
+    revision_id: str | None = Field(
+        default=None,
+        description="Manuscript revision to read chunks from; defaults to document current revision",
+    )
+    user_message: str = Field(..., min_length=1)
+    chunk_ids: list[str] | None = Field(default=None, description="If set, hydrate these chunk texts in order")
+    chapter_id: str | None = Field(default=None, description="When chunk_ids empty, use this chapter slice")
+    max_words: int = Field(default=5000, ge=100, le=50_000)
+    session_id: str | None = Field(default=None, description="Continue an existing story chat session")
+    provider: Literal["openai", "gemini"] | None = None
+
+
+class StoryChatResponse(BaseModel):
+    answer: str = ""
+    used_persona_version: int | None = None
+    session_id: str = ""
+    context_manifest: dict[str, Any] = Field(default_factory=dict)
+    truncation_notice: str | None = None
+    confidence: float | None = None
+    persona_refresh_pending: bool = False
+    inkblot_memory_updated_at: str | None = None
+    success: bool = True
+    error: str | None = None
+    error_code: str | None = None
+    recovery_hints: list[str] = Field(default_factory=list)
+
+
+class StoryPersonaResponse(BaseModel):
+    """Latest inkblot persona for a document."""
+
+    document_id: str
+    snapshot: dict[str, Any] | None = None
+    soul_loaded: bool = False
+    soul_paths: list[str] = Field(default_factory=list)
+    persona_refresh_pending: bool = False
+    latest_run_id: str | None = Field(default=None, description="Run used for story-wide context when available")
+    inkblot_memory: dict[str, Any] | None = Field(
+        default=None,
+        description="Document-scoped writer memory (goals, emotions, session summaries)",
+    )
+    inkblot_memory_updated_at: str | None = None
+
+
+class StoryChatSessionCloseRequest(BaseModel):
+    """Optional body when finalizing a session (panel close)."""
+
+    provider: Literal["openai", "gemini"] | None = None
+    last_turn_index: int | None = Field(
+        default=None,
+        description="Highest turn_index included in the close summary; omit for all turns",
+    )
+
+
+class StoryChatSessionCloseResponse(BaseModel):
+    success: bool = True
+    scheduled: bool = False
+    error: str | None = None

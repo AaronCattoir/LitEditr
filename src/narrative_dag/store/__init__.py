@@ -1,1 +1,1 @@
-"""Storage: SQLite-backed RunStore, JudgmentStore, repository interfaces."""
+"""Storage: SQLite-backed RunStore, JudgmentStore, and related stores."""

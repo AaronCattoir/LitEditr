@@ -76,7 +76,7 @@ def judge_reconsideration(bundle: ContextBundle, user_message: str, llm: Any) ->
 
 
 def run_judge_explain(state: dict[str, Any]) -> dict[str, Any]:
-    """LangGraph-style node: explain mode. Expects context_bundle, user_message, _llm."""
+    """Service-driven step: explain mode. Expects context_bundle, user_message, _llm."""
     bundle = state.get("context_bundle")
     msg = state.get("user_message", "")
     if not bundle:
@@ -86,7 +86,7 @@ def run_judge_explain(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def run_judge_reconsider(state: dict[str, Any]) -> dict[str, Any]:
-    """LangGraph-style node: reconsider mode. Expects context_bundle, user_message, _llm."""
+    """Service-driven step: reconsider mode. Expects context_bundle, user_message, _llm."""
     bundle = state.get("context_bundle")
     msg = state.get("user_message", "")
     if not bundle:

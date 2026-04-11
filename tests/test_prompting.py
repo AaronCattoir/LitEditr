@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 from narrative_dag.prompt_context import build_prompt_context
+from narrative_dag.nodes.quick_coach import slim_narrative_text_from_bundle
 from narrative_dag.prompts.conflict import critic_prompt
 from narrative_dag.prompts.detection import detector_prompt
 from narrative_dag.prompts.interaction import explain_prompt, reconsider_prompt
 from narrative_dag.prompts.judgment import editor_judgment_prompt
+from narrative_dag.prompts.quick_coach import quick_coach_prompt
 from narrative_dag.prompts.representation import paragraph_analysis_prompt
 from narrative_dag.schemas import (
     Chunk,
     ChunkJudgmentEntry,
+    ContextBundle,
     ContextWindow,
+    CriticResult,
     DocumentState,
     EditorJudgment,
     ElasticityResult,
@@ -161,15 +165,15 @@ def test_judgment_prompt_includes_preservation_tie_breaks():
     )
 
     assert "PROSE-CRAFT" in prompt and "NARRATIVE ARCHITECTURE" in prompt
-    assert "Do not default to KEEP because the defense makes a reasonable argument" in prompt
-    assert "Use the full severity range" in prompt
+    assert "SEVERITY SCALE" in prompt
+    assert "Weigh the defense's argument" in prompt
 
 
 def test_interaction_prompts_reuse_editorial_policy():
     explain = explain_prompt("Context bundle here", "Why was this flagged?")
     reconsider = reconsider_prompt("Context bundle here", "Please reconsider the tone call.")
 
-    assert "Preserve intentional prose unless it causes reader-facing damage" in explain
+    assert "Preserve intentional prose unless it produces clear reader-facing damage" in explain
     assert "Weigh intentionality, voice logic, and genre payoff" in reconsider
 
 
@@ -189,6 +193,49 @@ def test_critic_prompt_requires_reader_visible_failures():
 
     prompt = critic_prompt(prompt_ctx, "cliche_result: {'severity': 0.5}")
 
-    assert "Structure your critique in two sections: PROSE-CRAFT and NARRATIVE ARCHITECTURE" in prompt
-    assert "Do not confuse intentional voice or genre texture with damage" in prompt
-    assert "does it fully achieve it" in prompt
+    assert "PROSE-CRAFT" in prompt and "NARRATIVE ARCHITECTURE" in prompt
+    assert "You are not a proofreader" in prompt
+    assert "Distinguish between stylistic intent and actual degradation" in prompt
+
+
+def test_quick_coach_prompt_is_schema_aligned_and_concrete():
+    prompt = quick_coach_prompt(
+        "Target section context here.",
+        "Help me tighten this transition.",
+        current_revision_text="Current revision text goes here.",
+    )
+
+    assert "headline: 3-8 words naming the main fix or opportunity." in prompt
+    assert "bullets: 1-3 grounded observations; each should explain why it matters for reader effect." in prompt
+    assert "try_next: exactly one bounded action the writer can do now (single sentence)." in prompt
+    assert "Avoid generic advice like \"improve pacing\"" in prompt
+    assert "User focus (optional):\nHelp me tighten this transition." in prompt
+    assert "Current revision text goes here." in prompt
+    assert "STOP CONDITION" not in prompt
+
+
+def test_quick_coach_context_includes_latest_critic_panel():
+    target = _make_chunk("c2", "Target chunk text.", 1)
+    prev = _make_chunk("c1", "Previous context.", 0)
+    nxt = _make_chunk("c3", "Next context.", 2)
+    bundle = ContextBundle(
+        target_chunk=target,
+        context_window=ContextWindow(
+            target_chunk=target,
+            previous_chunks=[prev],
+            next_chunks=[nxt],
+            global_summary="Summary",
+        ),
+        document_state=DocumentState(),
+        critic_result=CriticResult(
+            verdict="weak",
+            critique="The scene stalls before the turn.",
+            failure_points=["Momentum drops in the second paragraph."],
+        ),
+    )
+
+    out = slim_narrative_text_from_bundle(bundle)
+    assert "LATEST CRITIC PANEL (TARGET CHUNK)" in out
+    assert "Verdict: weak" in out
+    assert "The scene stalls before the turn." in out
+    assert "- Momentum drops in the second paragraph." in out

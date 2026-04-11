@@ -1,7 +1,12 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { X, Download, BookMarked } from 'lucide-react';
-import type { ChunkJudgmentEntryPayload, EditorialReportPayload, StoryWidePayload } from '../lib/api';
+import { X, Download, BookMarked, ChevronDown, ChevronRight } from 'lucide-react';
+import type {
+  ChunkJudgmentEntryPayload,
+  EditorialReportPayload,
+  EvidenceSpanPayload,
+  StoryWidePayload,
+} from '../lib/api';
 import {
   buildStoryAnalysisMarkdown,
   defaultStoryAnalysisFilename,
@@ -20,6 +25,11 @@ interface StoryAnalysisPanelProps {
   /** Report is from document’s latest run, not the current revision (e.g. new save without re-analyze). */
   analysisFromFallback?: boolean;
   runBoundRevisionId?: string | null;
+  /** Scroll panel to a chunk card / evidence row (e.g. after clicking an inline highlight). */
+  scrollRequest?: { chunkId: string; evidenceKey?: string } | null;
+  onScrollRequestHandled?: () => void;
+  /** Scroll main manuscript to section and inline evidence span. */
+  onJumpToManuscriptEvidence?: (payload: { chunkId: string; evidenceKey: string }) => void;
 }
 
 function JsonOrText({ value }: { value: unknown }) {
@@ -32,7 +42,50 @@ function JsonOrText({ value }: { value: unknown }) {
   );
 }
 
-function StoryCritiqueSections({ entries }: { entries: ChunkJudgmentEntryPayload[] }) {
+function EvidenceJumpLinks({
+  chunkId,
+  label,
+  spans,
+  source,
+  onJump,
+}: {
+  chunkId: string;
+  label: string;
+  spans: EvidenceSpanPayload[] | undefined;
+  source: 'critic' | 'defense' | 'judgment';
+  onJump?: (payload: { chunkId: string; evidenceKey: string }) => void;
+}) {
+  if (!onJump || !spans?.length) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      <span className="text-[10px] uppercase tracking-wide text-ink-light w-full">{label} — jump to text</span>
+      {spans.map((_, i) => {
+        const key = `${source}-${i}`;
+        return (
+          <button
+            key={key}
+            type="button"
+            id={`story-evidence-${chunkId}-${key}`}
+            onClick={() => onJump({ chunkId, evidenceKey: key })}
+            className="text-[11px] px-2 py-0.5 rounded-full border border-border/80 bg-surface hover:bg-overlay text-ink-light hover:text-ink transition-colors max-w-full truncate"
+            title={`Show ${key} in manuscript`}
+          >
+            {spans[i]?.quote?.trim().slice(0, 48) || key}
+            {(spans[i]?.quote?.length ?? 0) > 48 ? '…' : ''}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function StoryCritiqueSections({
+  entries,
+  onJumpToManuscriptEvidence,
+}: {
+  entries: ChunkJudgmentEntryPayload[];
+  onJumpToManuscriptEvidence?: (payload: { chunkId: string; evidenceKey: string }) => void;
+}) {
   const sorted = [...entries].sort((a, b) => a.position - b.position);
   const visible = sorted.filter((e) => {
     const cr = e.critic_result;
@@ -64,7 +117,8 @@ function StoryCritiqueSections({ entries }: { entries: ChunkJudgmentEntryPayload
           return (
             <div
               key={e.chunk_id}
-              className="rounded-lg border border-border/70 bg-overlay/40 p-3 text-sm text-ink-light space-y-2"
+              id={`story-analysis-chunk-${e.chunk_id}`}
+              className="rounded-lg border border-border/70 bg-overlay/40 p-3 text-sm text-ink-light space-y-2 scroll-mt-4"
             >
               <div className="text-xs font-mono text-ink-light/80">Section {e.position + 1}</div>
               {cr?.critique?.trim() ? (
@@ -104,6 +158,15 @@ function StoryCritiqueSections({ entries }: { entries: ChunkJudgmentEntryPayload
                     <p className="mt-1 whitespace-pre-wrap leading-relaxed">{j.guidance}</p>
                   ) : null}
                 </div>
+              ) : null}
+              {j.evidence_spans && j.evidence_spans.length > 0 ? (
+                <EvidenceJumpLinks
+                  chunkId={e.chunk_id}
+                  label="Judgment"
+                  spans={j.evidence_spans}
+                  source="judgment"
+                  onJump={onJumpToManuscriptEvidence}
+                />
               ) : null}
             </div>
           );
@@ -152,7 +215,26 @@ export function StoryAnalysisPanel({
   report,
   analysisFromFallback = false,
   runBoundRevisionId = null,
+  scrollRequest = null,
+  onScrollRequestHandled,
+  onJumpToManuscriptEvidence,
 }: StoryAnalysisPanelProps) {
+  const [isSummaryCollapsed, setIsSummaryCollapsed] = useState(false);
+
+  useEffect(() => {
+    if (!scrollRequest) return;
+    const { chunkId, evidenceKey } = scrollRequest;
+    const card = document.getElementById(`story-analysis-chunk-${chunkId}`);
+    card?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    if (evidenceKey) {
+      document.getElementById(`story-evidence-${chunkId}-${evidenceKey}`)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+      });
+    }
+    onScrollRequestHandled?.();
+  }, [scrollRequest, onScrollRequestHandled]);
+
   if (!isOpen) return null;
 
   const handleExport = () => {
@@ -220,13 +302,35 @@ export function StoryAnalysisPanel({
               {analysisKind && <div>Kind: {analysisKind}</div>}
             </div>
 
-            <div>
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-light mb-2">Document summary</h3>
-              <p className="text-sm text-ink-light leading-relaxed whitespace-pre-wrap">{report.document_summary}</p>
+            <div className="rounded-lg border border-border/60 bg-overlay/20">
+              <button
+                type="button"
+                onClick={() => setIsSummaryCollapsed((prev) => !prev)}
+                className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-overlay/40 transition-colors rounded-lg"
+                aria-expanded={!isSummaryCollapsed}
+                aria-controls="story-analysis-document-summary"
+              >
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-light">Document summary</h3>
+                {isSummaryCollapsed ? (
+                  <ChevronRight size={14} className="text-ink-light shrink-0" />
+                ) : (
+                  <ChevronDown size={14} className="text-ink-light shrink-0" />
+                )}
+              </button>
+              {!isSummaryCollapsed ? (
+                <div id="story-analysis-document-summary" className="px-3 pb-3">
+                  <p className="text-sm text-ink-light leading-relaxed whitespace-pre-wrap">
+                    {report.document_summary}
+                  </p>
+                </div>
+              ) : null}
             </div>
 
             {report.chunk_judgments?.length ? (
-              <StoryCritiqueSections entries={report.chunk_judgments} />
+              <StoryCritiqueSections
+                entries={report.chunk_judgments}
+                onJumpToManuscriptEvidence={onJumpToManuscriptEvidence}
+              />
             ) : null}
 
             {(() => {

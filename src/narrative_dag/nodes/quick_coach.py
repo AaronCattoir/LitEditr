@@ -13,10 +13,32 @@ from narrative_dag.prompts.quick_coach import quick_coach_prompt
 from narrative_dag.schemas import ContextBundle, GenreIntention, QuickCoachAdvice
 
 
+def _format_latest_critic_panel(bundle: ContextBundle) -> str:
+    """Render current chunk's latest critic panel for quick-coach grounding."""
+    critic = bundle.critic_result
+    if critic is None:
+        return ""
+    lines = [
+        "",
+        "LATEST CRITIC PANEL (TARGET CHUNK)",
+        f"Verdict: {critic.verdict}",
+    ]
+    critique = (critic.critique or "").strip()
+    if critique:
+        lines.append(f"Critique: {critique}")
+    if critic.failure_points:
+        lines.append("Failure points:")
+        for p in critic.failure_points[:5]:
+            t = (p or "").strip()
+            if t:
+                lines.append(f"- {t}")
+    return "\n".join(lines)
+
+
 def slim_narrative_text_from_bundle(
     bundle: ContextBundle, *, short_story_single_chapter: bool = False
 ) -> str:
-    """Story + section context for quick coach; excludes detectors, critic, defense, judgment."""
+    """Story + section context for quick coach, plus latest critic panel when available."""
     gi = bundle.genre_intention
     if gi is None and bundle.document_state and bundle.document_state.genre_intention:
         gi = bundle.document_state.genre_intention
@@ -37,7 +59,7 @@ def slim_narrative_text_from_bundle(
     }
     pc = build_prompt_context(state)
     if pc is None:
-        return format_prompt_context(
+        base = format_prompt_context(
             PromptContext(
                 target_chunk=bundle.target_chunk,
                 previous_chunks=bundle.context_window.previous_chunks,
@@ -46,7 +68,9 @@ def slim_narrative_text_from_bundle(
                 genre_intention=gi,
             )
         )
-    return format_prompt_context(pc)
+        return f"{base}{_format_latest_critic_panel(bundle)}"
+    base = format_prompt_context(pc)
+    return f"{base}{_format_latest_critic_panel(bundle)}"
 
 
 def run_quick_coach(

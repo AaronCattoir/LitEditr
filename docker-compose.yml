@@ -1,0 +1,16 @@
+# Local beta: API + SPA with persistent SQLite under ./data
+services:
+  editr:
+    build: .
+    ports:
+      # Bind to localhost only (avoid LAN exposure): "127.0.0.1:8000:8000"
+      - "8000:8000"
+    environment:
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      # Optional: OPENAI_MODEL, GEMINI_MODEL, EDITR_PET_SOUL_DIR, etc.
+      # Compose loads project `.env` for ${VAR} substitution automatically.
+    volumes:
+      - ./data:/app/data

@@ -53,3 +53,19 @@ def test_run_all_detectors(state_with_context):
     assert "emotional_honesty_result" in out
     assert "redundancy_result" in out
     assert "risk_result" in out
+    assert len(out) == 6
+
+
+def test_run_all_detectors_parallel_merge_stable_keys(state_with_context):
+    """Parallel fan-out must expose the same six result keys as sequential merge."""
+    state_with_context["current_chunk_id"] = "c_parallel"
+    out = run_all_detectors(state_with_context)
+    expected = {
+        "drift_result",
+        "cliche_result",
+        "vagueness_result",
+        "emotional_honesty_result",
+        "redundancy_result",
+        "risk_result",
+    }
+    assert set(out.keys()) == expected

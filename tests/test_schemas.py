@@ -6,6 +6,7 @@ import pytest
 from narrative_dag.schemas import (
     Chunk,
     ContextWindow,
+    DriftResult,
     EditorJudgment,
     GenreIntention,
     RawDocument,
@@ -35,3 +36,10 @@ def test_context_window():
     ctx = ContextWindow(target_chunk=target, previous_chunks=[prev], next_chunks=[], global_summary="")
     assert ctx.target_chunk.id == "c2"
     assert len(ctx.previous_chunks) == 1
+
+
+def test_drift_result_normalizes_paraphrased_drift_type():
+    d = DriftResult.model_validate(
+        {"drift_score": 0.4, "drift_type": "narrative architecture", "evidence": "x", "confidence": 0.8}
+    )
+    assert d.drift_type == "narrative"

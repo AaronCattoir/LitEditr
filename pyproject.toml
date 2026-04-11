@@ -9,7 +9,6 @@ description = "Advisory-only editorial analysis DAG for long-form narrative text
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "langgraph>=1.1.2",
     "langchain-core>=1.2.19",
     "langchain-google-genai>=2.1.12",
     "langchain-google-vertexai>=1.0.5",
@@ -32,11 +31,11 @@ api = [
 mcp = [
     "mcp>=1.2.0",
 ]
-mem0 = []
 
 [project.scripts]
 editr-api = "narrative_dag.api:main"
 editr-mcp = "narrative_dag.mcp_server:main"
+editr-cli = "narrative_dag.cli:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]

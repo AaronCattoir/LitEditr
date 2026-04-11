@@ -1,4 +1,4 @@
-# Agent context: LangGraph narrative DAG (`editr`)
+# Agent context: narrative DAG (`editr`)
 
 **Purpose.** This file is the handoff surface for future agents working on the narrative editorial pipeline. **Append** to the [Changelog (agents)](#changelog-agents) when you change graph topology, node contracts, or orchestration—do not rely on chat history.
 
@@ -6,18 +6,13 @@
 
 ---
 
-## Critical: two orchestration paths
+## Orchestration: `run_analysis` only
 
-1. **Compiled LangGraph (per-chunk only)** — `build_chunk_pipeline_graph()` in `src/narrative_dag/graph.py`  
-   - `StateGraph(dict)` with a linear chain ending at `END`.  
-   - Used for visualization (`scripts/generate_graph_visuals.py`) and as the canonical **node order** for one chunk.  
-   - **Not** invoked end-to-end for full-document runs today.
+**Full run (`run_analysis`)** — `src/narrative_dag/graph.py`  
+- **Imperative** orchestration: LLM chunker → plot overview + character map (parallel) → **calibration** on first chunk (runs context → paragraph → voice → `document_state_builder` once) → **for each chunk**, a Python loop over the node functions below (then `report_collector` after all chunks).  
+- **Mermaid diagrams** for docs live in `scripts/generate_graph_visuals.py` (writes `artifacts/graphs/`). Keep them in sync when you change the per-chunk loop or calibration block.
 
-2. **Full run (`run_analysis`)** — same file, `run_analysis()`  
-   - **Imperative** orchestration: LLM chunker → plot overview → character map → **calibration** on first chunk (runs context → paragraph → voice → `document_state_builder` once) → **for each chunk**, a Python loop that calls the **same node functions** in the same order as the compiled graph (plus `report_collector` at the end).  
-   - If you add/remove/reorder pipeline steps, you must usually update **both** `build_chunk_pipeline_graph()` **and** the `steps` list inside `run_analysis()` (and calibration block if it duplicates the head of the pipeline).
-
-**Chat / interaction** — `src/narrative_dag/nodes/interaction.py` exposes LangGraph-*style* node-shaped callables (`run_judge_explain`, `run_judge_reconsider`) but **there is no `StateGraph` for chat**; `NarrativeAnalysisService.chat()` wires LLM calls directly.
+**Chat / interaction** — `src/narrative_dag/nodes/interaction.py` exposes node-shaped callables (`run_judge_explain`, `run_judge_reconsider`); `NarrativeAnalysisService.chat()` wires LLM calls directly (no separate graph library).
 
 ---
 
@@ -38,19 +33,19 @@
 
 ---
 
-## Per-chunk pipeline (compiled graph order)
+## Per-chunk pipeline (order in `run_analysis` loop)
 
-| Order | Graph node name   | Function                     | Module                      |
-|------:|-------------------|------------------------------|-----------------------------|
-| 1     | `context_builder` | `run_context_builder`        | `nodes/ingestion.py`        |
-| 2     | `paragraph_analyzer` | `paragraph_analyzer`      | `nodes/representation.py`   |
-| 3     | `voice_profiler`  | `voice_profiler`             | `nodes/representation.py`   |
+| Order | Step name            | Function                     | Module                      |
+|------:|----------------------|------------------------------|-----------------------------|
+| 1     | `context_builder`    | `run_context_builder`        | `nodes/ingestion.py`        |
+| 2     | `paragraph_analyzer` | `paragraph_analyzer`       | `nodes/representation.py`   |
+| 3     | `voice_profiler`     | `voice_profiler`             | `nodes/representation.py`   |
 | 4     | `document_state_builder` | `run_document_state_builder` | `nodes/representation.py` |
-| 5     | `detectors`       | `run_all_detectors`          | `nodes/detection.py`        |
-| 6     | `critic`          | `critic_agent`               | `nodes/conflict.py`         |
-| 7     | `defense`         | `defense_agent`              | `nodes/conflict.py`         |
-| 8     | `editor_judge`    | `editor_judge`               | `nodes/judgment.py`         |
-| 9     | `elasticity`      | `elasticity_evaluator`       | `nodes/judgment.py`         |
+| 5     | `detectors`          | `run_all_detectors`          | `nodes/detection.py`        |
+| 6     | `critic`             | `critic_agent`               | `nodes/conflict.py`         |
+| 7     | `defense`            | `defense_agent`              | `nodes/conflict.py`         |
+| 8a/b  | (parallel)         | `editor_judge` **and** `evidence_synthesizer` | `nodes/judgment.py` |
+| 9     | `elasticity`         | `elasticity_evaluator`       | `nodes/judgment.py`         |
 
 Prompts live under `src/narrative_dag/prompts/` (mirrors node domains).
 
@@ -58,8 +53,7 @@ Prompts live under `src/narrative_dag/prompts/` (mirrors node domains).
 
 ## State contract
 
-- **Authoritative schema:** `GraphState` (`TypedDict`, `total=False`) in `src/narrative_dag/schemas.py` — keys include `chunks`, `current_chunk_id`, `context_window`, `document_state`, detector `*_result`, `critic_result`, `defense_result`, `editor_judgment`, `elasticity_result`, `chunk_judgments`, `editorial_report`, plus `plot_overview`, `character_database`, `global_summary`, and injected `_llm` / `_llm_detector` / `_llm_judge`.  
-- Runtime state is a **plain `dict`**; nodes return partial dicts merged by callers.
+- Runtime pipeline state is a **plain `dict[str, Any]`** merged across steps. Typical keys include `chunks`, `current_chunk_id`, `context_window`, `document_state`, detector `*_result`, `critic_result`, `defense_result`, `editor_judgment`, `evidence_synthesis_result`, `elasticity_result`, `chunk_judgments`, `editorial_report`, plus `plot_overview`, `character_database`, `global_summary`, and injected `_llm` / `_llm_detector` / `_llm_judge`. Pydantic models in `schemas.py` describe persisted/API shapes; the in-memory dict is not a single `TypedDict`.
 
 ---
 
@@ -68,9 +62,9 @@ Prompts live under `src/narrative_dag/prompts/` (mirrors node domains).
 | Layer        | Location                         | Notes |
 |-------------|-----------------------------------|-------|
 | Service API | `src/narrative_dag/service.py`    | `NarrativeAnalysisService.analyze_document` → `run_analysis`; SQLite via `RunStore` / `JudgmentStore`. |
-| CLI         | `src/narrative_dag/cli.py`        | `python -m narrative_dag.cli` |
-| Graph build | `src/narrative_dag/graph.py`      | `build_chunk_pipeline_graph`, `run_analysis` |
-| DAG diagrams | `scripts/generate_graph_visuals.py` | Writes `artifacts/graphs/` (Mermaid + optional PNG for chunk graph only). |
+| CLI         | `src/narrative_dag/cli.py`        | `editr-cli` (console script) or `python -m narrative_dag.cli` |
+| Graph / analysis | `src/narrative_dag/graph.py` | `run_analysis` |
+| DAG diagrams | `scripts/generate_graph_visuals.py` | Writes `artifacts/graphs/` (static Mermaid). |
 
 ---
 
@@ -85,6 +79,10 @@ Prompts live under `src/narrative_dag/prompts/` (mirrors node domains).
 
 _Add a dated bullet when you change the DAG, node I/O, or orchestration._
 
-- **2026-03-23** — Initial context file. Documented split between `build_chunk_pipeline_graph()` (compiled per-chunk DAG) and `run_analysis()` (full imperative orchestration with matching per-chunk loop). Noted absence of a compiled LangGraph for chat; interaction nodes are service-driven.
-- **2026-03-23** — Persistent `EDITR_DB_PATH`, SCD2 `document_revisions` / `chunk_versions`, star-style `analytic_facts`, revision events, async jobs, FastAPI (`narrative_dag.api.app`), MCP (`mcp_server.py`), evidence spans + `evidence_fill`, `run_analysis(..., only_chunk_ids=...)` for incremental reruns, `build_incremental_chunk_graph()` alias.
+- **2026-04-10** — Dead-code cleanup: removed LangGraph dependency and `build_chunk_pipeline_graph` / `build_incremental_chunk_graph`; per-chunk topology documented via static Mermaid in `scripts/generate_graph_visuals.py`. Removed unused `GraphState` / `ChatTurn` schema types, unused `store/repositories.py`, and test-only diff helpers (production keeps `sha256_text` only). Added `editr-cli` console script.
+- **2026-04-01** — Inkblot: SQLite tables `story_persona_snapshots`, `story_persona_events`, `story_chat_sessions`, `story_chat_turns`; optional `async_jobs.input_hash` / `output_persona_version`. Pet soul markdown at `docs/pet/PET_SOUL.md`. APIs: `GET /v1/documents/{document_id}/persona`, `POST /v1/documents/{document_id}/story-chat`, session/turn listing. Full analyze schedules `persona_refresh` async (disable with `EDITR_DISABLE_PERSONA_REFRESH=1`).
+- **2026-04-01** — Frontend: lower-left Inkblot launcher (`MessageCircle`), `StoryChatPanel` sliding from the left; `storyChatStorage` persists `session_id` per document; first open POSTs starter `user_message` for greeting, then `listStoryChatTurns` on reopen. Hidden when `VITE_USE_MOCK_API` or no `documentId`/chapter.
+- **2026-04-02** — Inkblot visuals: `InkblotPersonaLLMSnapshot` now includes optional `visual_model` (`svg_path_d`, `primary_color`, `secondary_color`, `animation_speed`). `persona_refresh` prompt asks LLM to return avatar-safe SVG path + palette. Frontend parses `llm_snapshot.visual_model` and renders animated `InkblotAvatar` in launcher and story chat header; polls persona while `persona_refresh_pending`.
+- **2026-03-23** — Initial context file. Documented compiled per-chunk LangGraph (`build_chunk_pipeline_graph`) vs `run_analysis()` imperative orchestration; interaction nodes are service-driven. *(Superseded 2026-04-10: LangGraph builders removed.)*
+- **2026-03-23** — Persistent `EDITR_DB_PATH`, SCD2 `document_revisions` / `chunk_versions`, star-style `analytic_facts`, revision events, async jobs, FastAPI (`narrative_dag.api.app`), MCP (`mcp_server.py`), evidence spans + `evidence_fill`, `run_analysis(..., only_chunk_ids=...)` for incremental reruns.
 - **2026-03-30** — Documented `RunLLMBundle`, env/API provider resolution, optional `EDITR_STATIC_DIR` SPA mount (after API routes), root multi-stage Docker image, and MCP stdio via `docker run -i` / `docker exec -i`.

@@ -117,13 +117,13 @@ def format_prompt_context(ctx: PromptContext) -> str:
     lines.extend(
         [
             "",
-            "PREVIOUS CONTEXT",
+            "PREVIOUS CONTEXT (reference only — do not critique)",
             join_chunks(ctx.previous_chunks) or "(none)",
             "",
-            "TARGET CHUNK",
+            "TARGET CHUNK ← critique this chunk only",
             ctx.target_chunk.text,
             "",
-            "NEXT CONTEXT",
+            "NEXT CONTEXT (reference only — do not critique)",
             join_chunks(ctx.next_chunks) or "(none)",
         ]
     )

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { Feather, Sparkles, Loader2, FolderOpen, Plus } from 'lucide-react';
+import { Feather, Sparkles, Loader2, FolderOpen, Plus, Trash2 } from 'lucide-react';
 import {
   type ProjectBootstrap,
   type ChapterDoc,
@@ -13,11 +13,13 @@ import {
   getLatestRevisionAnalysis,
   listRevisionChunks,
   listDocuments,
+  deleteDocument,
   getDocumentManuscript,
   makeSectionRow,
 } from '../lib/api';
 import { parseManuscriptToChapters } from '../lib/manuscriptSerialize';
-import { loadPendingDraft, clearPendingDraft } from '../lib/draftStorage';
+import { loadPendingDraft, clearPendingDraft, clearDraft } from '../lib/draftStorage';
+import { clearStoryChatStored } from '../lib/storyChatStorage';
 import { mergeMetadataFromAnalysisReport } from '../lib/storyWideMetadata';
 
 const DEFAULT_SECTION = `# The Art of Slowing Down
@@ -53,6 +55,7 @@ export function ProjectInit({ onBootstrap }: ProjectInitProps) {
   const [docs, setDocs] = useState<DocumentListRow[]>([]);
   const [loadingDocs, setLoadingDocs] = useState(false);
   const [loadingDocId, setLoadingDocId] = useState<string | null>(null);
+  const [deletingDocId, setDeletingDocId] = useState<string | null>(null);
 
   useEffect(() => {
     if (tab !== 'load' || mock) return;
@@ -145,6 +148,39 @@ export function ProjectInit({ onBootstrap }: ProjectInitProps) {
       setError(e instanceof Error ? e.message : 'Could not load document');
     } finally {
       setLoadingDocId(null);
+    }
+  };
+
+  const handleDeleteDoc = async (doc: DocumentListRow, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const label = doc.title?.trim() || 'Untitled';
+    if (
+      !window.confirm(
+        `Delete “${label}” from this device? This removes the story and its saved analysis from the server. This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    setDeletingDocId(doc.document_id);
+    setError(null);
+    try {
+      await deleteDocument(doc.document_id);
+      clearDraft(doc.document_id);
+      clearStoryChatStored(doc.document_id);
+      setDocs((prev) => prev.filter((d) => d.document_id !== doc.document_id));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not delete document';
+      const notFound = message.includes('HTTP 404');
+      if (notFound) {
+        // Stale list entry or already-deleted document: remove card and clear local cache anyway.
+        clearDraft(doc.document_id);
+        clearStoryChatStored(doc.document_id);
+        setDocs((prev) => prev.filter((d) => d.document_id !== doc.document_id));
+        return;
+      }
+      setError(message);
+    } finally {
+      setDeletingDocId(null);
     }
   };
 
@@ -424,25 +460,44 @@ export function ProjectInit({ onBootstrap }: ProjectInitProps) {
               <p className="text-sm text-ink-light text-center py-4">No projects found. Create one first.</p>
             )}
             {!mock && !loadingDocs && docs.map((doc) => (
-              <button
+              <div
                 key={doc.document_id}
-                type="button"
-                disabled={loadingDocId === doc.document_id}
-                onClick={() => handleLoadDoc(doc)}
-                className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-overlay hover:bg-border transition-colors text-left disabled:opacity-60"
+                className="flex items-stretch gap-2 rounded-xl bg-overlay border border-transparent hover:border-border/60 transition-colors"
               >
-                <div className="min-w-0">
-                  <p className="font-medium text-ink truncate">{doc.title || 'Untitled'}</p>
-                  <p className="text-xs text-ink-light mt-0.5">
-                    {new Date(doc.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
-                  </p>
+                <button
+                  type="button"
+                  disabled={loadingDocId === doc.document_id || deletingDocId === doc.document_id}
+                  onClick={() => handleLoadDoc(doc)}
+                  className="flex-1 min-w-0 flex items-center justify-between gap-3 px-4 py-3 text-left rounded-xl hover:bg-border/80 transition-colors disabled:opacity-60"
+                >
+                  <div className="min-w-0">
+                    <p className="font-medium text-ink truncate">{doc.title || 'Untitled'}</p>
+                    <p className="text-xs text-ink-light mt-0.5">
+                      {new Date(doc.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
+                    </p>
+                  </div>
+                  {loadingDocId === doc.document_id ? (
+                    <Loader2 size={16} className="animate-spin text-accent shrink-0" />
+                  ) : (
+                    <FolderOpen size={16} className="text-ink-light shrink-0" aria-hidden />
+                  )}
+                </button>
+                <div className="flex items-center pr-2 py-2">
+                  <button
+                    type="button"
+                    aria-label={`Delete ${doc.title || 'Untitled'}`}
+                    disabled={loadingDocId === doc.document_id || deletingDocId === doc.document_id}
+                    onClick={(e) => handleDeleteDoc(doc, e)}
+                    className="shrink-0 p-2.5 rounded-lg text-ink-light hover:text-rose-600 hover:bg-rose-500/10 transition-colors disabled:opacity-50"
+                  >
+                    {deletingDocId === doc.document_id ? (
+                      <Loader2 size={16} className="animate-spin text-accent" />
+                    ) : (
+                      <Trash2 size={16} />
+                    )}
+                  </button>
                 </div>
-                {loadingDocId === doc.document_id ? (
-                  <Loader2 size={16} className="animate-spin text-accent shrink-0" />
-                ) : (
-                  <FolderOpen size={16} className="text-ink-light shrink-0" />
-                )}
-              </button>
+              </div>
             ))}
           </div>
         )}

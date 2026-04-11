@@ -1,0 +1,31 @@
+# Dependencies and build outputs
+**/node_modules
+**/dist
+**/.vite
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# Env and secrets (never bake into context)
+.env
+.env.*
+!.env.example
+
+# Git and IDE
+.git
+.gitignore
+.cursor
+**/.DS_Store
+
+# Logs and local artifacts
+*.log
+debug-*.log
+**/coverage
+**/htmlcov
+
+# Large / irrelevant for image
+**/agent-transcripts
+**/*.sqlite
+**/data

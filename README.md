@@ -2,7 +2,11 @@
 
 Advisory-only editorial analysis DAG for long-form narrative text (stories, novels). Ingests documents with user-defined genre intention, builds document state, runs detectors, performs critic/defense conflict, and delivers per-chunk editorial judgments (keep/cut/rewrite guidance) without generating replacement prose.
 
+**Internal context wiki:** [docs/wiki/README.md](docs/wiki/README.md) (how pipeline, Inkblot, bundles, and client state fit together, with worked examples).
+
 ## Docker quickstart
+
+Full setup (PowerShell-first Docker commands, `.env` reference, verification checklist, and optional `docker save` / `docker load` for a website-hosted image): [docs/ONBOARDING.md](docs/ONBOARDING.md).
 
 Build and run API + built SPA on port 8000:
 
@@ -15,12 +19,28 @@ docker run --rm -p 8000:8000 \
   editr
 ```
 
-Open `http://localhost:8000` for the UI; `GET /health` and `GET /v1/...` stay on the same process. SQLite lives at `/app/data/editr.sqlite` inside the container (add a volume if you want persistence).
+Open `http://localhost:8000` for the UI; `GET /health` (liveness), `GET /health/ready` (SQLite ping), and `GET /v1/...` stay on the same process. SQLite lives at `/app/data/editr.sqlite` inside the container (use a volume for persistence).
 
 Image defaults:
 
 - `EDITR_STATIC_DIR=/app/static` (Vite `dist` copied at build time)
 - `EDITR_DB_PATH=/app/data/editr.sqlite`
+- Pet soul / Inkblot seed markdown: `docs/pet` is copied into the image; override with `EDITR_PET_SOUL_DIR` if you mount custom content.
+
+### Local beta: compose + persistence
+
+```bash
+mkdir -p data
+docker compose up --build
+```
+
+This bind-mounts `./data` → `/app/data` so the database survives container restarts. Copy `.env.example` to `.env` and set API keys (see table below). Optional: restrict the port to this machine only:
+
+```bash
+docker run --rm -p 127.0.0.1:8000:8000 -v "$(pwd)/data:/app/data" -e LLM_PROVIDER=gemini -e GEMINI_API_KEY=... editr
+```
+
+**First-run smoke (with keys set):** open the UI → create or open a document → save → run analyze. `curl -sf http://localhost:8000/health/ready` should return `{"status":"ready"}`.
 
 ## Provider environment (OpenAI / Gemini)
 

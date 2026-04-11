@@ -1,34 +1,37 @@
-"""Generate visual DAG artifacts from LangGraph definitions."""
+"""Generate Mermaid DAG artifacts for documentation (static templates; mirrors `run_analysis` per-chunk steps)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from narrative_dag.graph import build_chunk_pipeline_graph
+# Per-chunk pipeline: same node order as the loop in `narrative_dag.graph.run_analysis`.
+# After `defense`, `editor_judge` and `evidence_synthesizer` run in parallel, then `elasticity`.
+CHUNK_PIPELINE_MERMAID = """flowchart TD
+    contextBuilder[context_builder] --> paragraphAnalyzer[paragraph_analyzer]
+    paragraphAnalyzer --> voiceProfiler[voice_profiler]
+    voiceProfiler --> documentStateBuilder[document_state_builder]
+    documentStateBuilder --> detectors[run_all_detectors]
+    detectors --> critic[critic_agent]
+    critic --> defense[defense_agent]
+    defense --> editorJudge[editor_judge]
+    defense --> evidenceSynth[evidence_synthesizer]
+    editorJudge --> elasticity[elasticity_evaluator]
+    evidenceSynth --> elasticity
+"""
 
 
 def main() -> None:
     out_dir = Path("artifacts/graphs")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    chunk_graph = build_chunk_pipeline_graph().get_graph()
-    chunk_mermaid = chunk_graph.draw_mermaid()
+    chunk_mermaid = CHUNK_PIPELINE_MERMAID.strip() + "\n"
 
-    # Raw Mermaid
     (out_dir / "chunk_pipeline.mmd").write_text(chunk_mermaid, encoding="utf-8")
 
-    # Markdown preview
     (out_dir / "chunk_pipeline.md").write_text(
-        "# Chunk Pipeline DAG\n\n```mermaid\n" + chunk_mermaid + "\n```\n",
+        "# Chunk Pipeline (per chunk)\n\n```mermaid\n" + chunk_mermaid + "```\n",
         encoding="utf-8",
     )
-
-    # Optional PNG if renderer is available.
-    try:
-        png = chunk_graph.draw_mermaid_png()
-        (out_dir / "chunk_pipeline.png").write_bytes(png)
-    except Exception:
-        pass
 
     # Full workflow (top-level orchestration in run_analysis).
     full_mermaid = """flowchart TD
@@ -46,7 +49,9 @@ def main() -> None:
     detectors --> critic[critic_agent]
     critic --> defense[defense_agent]
     defense --> editorJudge[editor_judge]
+    defense --> evidenceSynth[evidence_synthesizer]
     editorJudge --> elasticity[elasticity_evaluator]
+    evidenceSynth --> elasticity
     elasticity --> collect[append_chunk_judgment]
     collect --> loop
     loop --> reportCollector[report_collector]

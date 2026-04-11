@@ -12,6 +12,7 @@ DETECTOR_GUIDANCE = {
         "Compare the chunk against the declared story point, genre, and recent trajectory",
         "Do not call ordinary first-person subjectivity, repression, or rough idiom drift",
         "Flag drift only when the prose pulls the story into the wrong mode or psychology",
+        "drift_type must be exactly one of: tone, syntax, psychological, narrative, or empty string if none applies",
     ],
     "cliche": [
         "Flag dead language, borrowed stock moves, or unearned familiar beats",

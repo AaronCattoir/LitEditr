@@ -14,8 +14,10 @@ from narrative_dag.schemas import (
     DocumentState,
     GenreIntention,
     PlotOverview,
+    QuickCoachAdvice,
 )
 from narrative_dag.store.run_store import RunStore, serialize_story_wide_for_api
+from narrative_dag.store.story_chat_store import StoryChatStore
 
 
 def _reset_app_singletons() -> None:
@@ -79,6 +81,23 @@ def _seed_run_with_chunk(conn, document_id: str, revision_id: str, run_id: str, 
         "current_judgment": None,
     }
     rs.save_chunk_artifact(run_id, chunk_id, 0, artifact)
+
+
+def test_delete_document(client_isolated):
+    r = client_isolated.post("/v1/documents", params={"title": "Gone"})
+    assert r.status_code == 200
+    doc_id = r.json()["document_id"]
+    r = client_isolated.post(
+        f"/v1/documents/{doc_id}/revisions",
+        json={"text": "Once upon a time.\n\nThe end."},
+    )
+    assert r.status_code == 200
+    d = client_isolated.delete(f"/v1/documents/{doc_id}")
+    assert d.status_code == 200
+    assert d.json().get("deleted") is True
+    assert client_isolated.get(f"/v1/documents/{doc_id}/manuscript").status_code == 404
+    listed = client_isolated.get("/v1/documents").json().get("documents") or []
+    assert all(x["document_id"] != doc_id for x in listed)
 
 
 def test_runtime_providers_endpoint(client_isolated):
@@ -148,6 +167,81 @@ def test_quick_coach_200_with_story_map(monkeypatch, tmp_path):
     assert data["advice"]["headline"]
 
 
+def test_quick_coach_append_story_chat_turns(monkeypatch, tmp_path):
+    db_path = str(tmp_path / "qc_chat.sqlite")
+    client = _client_for_db(monkeypatch, db_path)
+    conn = init_db(db_path)
+    r = client.post("/v1/documents", json={})
+    doc_id = r.json()["document_id"]
+    r = client.post(f"/v1/documents/{doc_id}/revisions", json={"text": "Hello world."})
+    rev_id = r.json()["revision_id"]
+    _seed_run_with_chunk(conn, doc_id, rev_id, "run-seed", "c1")
+
+    def fake_run_quick_coach(*_a, **_kw):
+        return QuickCoachAdvice(
+            headline="Fix pacing",
+            bullets=["Tighten opener", "Clarify goal"],
+            try_next="Add a beat",
+        )
+
+    monkeypatch.setattr("narrative_dag.nodes.quick_coach.run_quick_coach", fake_run_quick_coach)
+
+    resp = client.post(
+        f"/v1/revisions/{rev_id}/quick-coach",
+        json={"chunk_id": "c1", "append_story_chat": True},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    assert data["story_chat_appended"] is True
+    sid = data["story_chat_session_id"]
+    assert sid
+
+    tr = client.get(f"/v1/story-chat/sessions/{sid}/turns")
+    assert tr.status_code == 200
+    turns = tr.json()["turns"]
+    assert len(turns) == 2
+    assert turns[0]["role"] == "user"
+    assert "Quick coach" in turns[0]["content"]
+    assert turns[1]["role"] == "assistant"
+    assert "Fix pacing" in turns[1]["content"]
+    assert "• Tighten opener" in turns[1]["content"]
+    assert "Try next: Add a beat" in turns[1]["content"]
+
+
+def test_quick_coach_append_story_chat_invalid_session_creates_new(monkeypatch, tmp_path):
+    db_path = str(tmp_path / "qc_chat2.sqlite")
+    client = _client_for_db(monkeypatch, db_path)
+    conn = init_db(db_path)
+    r1 = client.post("/v1/documents", json={})
+    doc1 = r1.json()["document_id"]
+    r2 = client.post("/v1/documents", json={})
+    doc2 = r2.json()["document_id"]
+    sid_other = StoryChatStore(conn).create_session(doc2)
+
+    r = client.post(f"/v1/documents/{doc1}/revisions", json={"text": "Alpha."})
+    rev1 = r.json()["revision_id"]
+    _seed_run_with_chunk(conn, doc1, rev1, "run-a", "c1")
+
+    def fake_run_quick_coach(*_a, **_kw):
+        return QuickCoachAdvice(headline="Tip", bullets=["One"], try_next=None)
+
+    monkeypatch.setattr("narrative_dag.nodes.quick_coach.run_quick_coach", fake_run_quick_coach)
+
+    resp = client.post(
+        f"/v1/revisions/{rev1}/quick-coach",
+        json={
+            "chunk_id": "c1",
+            "append_story_chat": True,
+            "story_chat_session_id": sid_other,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["story_chat_appended"] is True
+    assert data["story_chat_session_id"] != sid_other
+
+
 def test_quick_coach_422_run_wrong_revision(monkeypatch, tmp_path):
     db_path = str(tmp_path / "seed2.sqlite")
     client = _client_for_db(monkeypatch, db_path)
@@ -163,6 +257,24 @@ def test_quick_coach_422_run_wrong_revision(monkeypatch, tmp_path):
         json={"chunk_id": "c1", "run_id": "nonexistent-run"},
     )
     assert bad.status_code == 422
+
+
+def test_quick_coach_422_chunk_missing_for_explicit_run(monkeypatch, tmp_path):
+    db_path = str(tmp_path / "seed3.sqlite")
+    client = _client_for_db(monkeypatch, db_path)
+    conn = init_db(db_path)
+    r = client.post("/v1/documents", json={})
+    doc_id = r.json()["document_id"]
+    r = client.post(f"/v1/documents/{doc_id}/revisions", json={"text": "A"})
+    rev_id = r.json()["revision_id"]
+    _seed_run_with_chunk(conn, doc_id, rev_id, "run-y", "c1")
+
+    bad = client.post(
+        f"/v1/revisions/{rev_id}/quick-coach",
+        json={"chunk_id": "missing-chunk", "run_id": "run-y"},
+    )
+    assert bad.status_code == 422
+    assert "chunk not found" in bad.json()["detail"].lower()
 
 
 def test_bookmarks_and_restore(monkeypatch, tmp_path):
@@ -465,3 +577,38 @@ def test_analyze_rejects_invalid_client_chunks_422(client_isolated, suppress_ana
         },
     )
     assert bad.status_code == 422
+
+
+def test_repeated_chunks_endpoint_calls_remain_stable(client_isolated):
+    r = client_isolated.post("/v1/documents", json={})
+    doc_id = r.json()["document_id"]
+    r = client_isolated.post(f"/v1/documents/{doc_id}/revisions", json={"text": "One.\n\nTwo."})
+    rev_id = r.json()["revision_id"]
+    for _ in range(30):
+        out = client_isolated.get(f"/v1/revisions/{rev_id}/chunks")
+        assert out.status_code == 200
+
+
+def test_submit_revision_with_chunks_persists_chunk_versions(client_isolated):
+    """Save path must write chunk_versions so story chat / quick coach can resolve chunk_id on head revision."""
+    r = client_isolated.post("/v1/documents", json={})
+    doc_id = r.json()["document_id"]
+    text = "aa\n\nbb"
+    r = client_isolated.post(
+        f"/v1/documents/{doc_id}/revisions",
+        json={
+            "text": text,
+            "chunks": [
+                {"chunk_id": "c1", "start_char": 0, "end_char": 3},
+                {"chunk_id": "c2", "start_char": 3, "end_char": 6},
+            ],
+        },
+    )
+    assert r.status_code == 200
+    rev_id = r.json()["revision_id"]
+    out = client_isolated.get(f"/v1/revisions/{rev_id}/chunks")
+    assert out.status_code == 200
+    chunks = out.json()["chunks"]
+    assert len(chunks) == 2
+    assert chunks[0]["chunk_id"] == "c1"
+    assert chunks[1]["chunk_id"] == "c2"

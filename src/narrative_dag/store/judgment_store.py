@@ -10,7 +10,7 @@ from narrative_dag.schemas import EditorJudgment, JudgmentVersion
 
 
 class JudgmentStore:
-    """SQLite implementation of JudgmentStoreInterface."""
+    """SQLite-backed immutable judgment versions keyed by run_id + chunk_id."""
 
     def __init__(self, conn: Any) -> None:
         self._conn = conn
