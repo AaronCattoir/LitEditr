@@ -1,4 +1,7 @@
-# editr
+# LitEditr
+
+<img width="1911" height="914" alt="litedit-1" src="https://github.com/user-attachments/assets/5f48fd4a-4b87-4d58-9445-b4de109c844c" />
+
 
 Advisory-only editorial analysis DAG for long-form narrative text (stories, novels). Ingests documents with user-defined genre intention, builds document state, runs detectors, performs critic/defense conflict, and delivers per-chunk editorial judgments (keep/cut/rewrite guidance) without generating replacement prose.
 
