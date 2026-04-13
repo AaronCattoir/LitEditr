@@ -10,7 +10,15 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
-      # Optional: OPENAI_MODEL, GEMINI_MODEL, EDITR_PET_SOUL_DIR, etc.
-      # Compose loads project `.env` for ${VAR} substitution automatically.
+      # Model IDs (must match what your API key can call; same vars as .env / config.py)
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      GEMINI_FAST_MODEL: ${GEMINI_FAST_MODEL:-gemini-2.5-flash}
+      GEMINI_PRO_MODEL: ${GEMINI_PRO_MODEL:-gemini-2.5-flash}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4-mini}
+      OPENAI_FAST_MODEL: ${OPENAI_FAST_MODEL:-gpt-5.4-mini}
+      OPENAI_PRO_MODEL: ${OPENAI_PRO_MODEL:-gpt-5.4}
+      EDITR_DIALECTIC_DEPTH: ${EDITR_DIALECTIC_DEPTH:-off}
+      # Compose loads project `.env` for ${VAR} substitution. Keys above are passed into the container
+      # (unlike bare `load_dotenv` alone when no .env file exists inside the image).
     volumes:
       - ./data:/app/data

@@ -60,7 +60,9 @@ DEFAULT_LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 # Optional stage-specific model routing.
 # Detectors can use cheaper/faster models while conflict/judgment stays on a stronger model.
 DEFAULT_GEMINI_FAST_MODEL = os.getenv("GEMINI_FAST_MODEL", "gemini-2.5-flash")
-DEFAULT_GEMINI_PRO_MODEL = os.getenv("GEMINI_PRO_MODEL", "gemini-3.1-pro")
+# Pro-tier default must be a model ID that exists on the Gemini Developer API (v1beta generateContent).
+# Older examples used gemini-3.1-pro; if unset, match GEMINI_MODEL so Docker/local behave the same without extra env.
+DEFAULT_GEMINI_PRO_MODEL = os.getenv("GEMINI_PRO_MODEL") or DEFAULT_GEMINI_MODEL
 DEFAULT_VERTEX_FAST_MODEL = os.getenv("VERTEX_FAST_MODEL", "gemini-3.1-flash")
 DEFAULT_VERTEX_PRO_MODEL = os.getenv("VERTEX_PRO_MODEL", DEFAULT_VERTEX_MODEL)
 DEFAULT_OPENAI_FAST_MODEL = os.getenv("OPENAI_FAST_MODEL", "gpt-5.4-mini")
