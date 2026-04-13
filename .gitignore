@@ -27,6 +27,9 @@ editr.sqlite
 editr.sqlite-wal
 editr.sqlite-shm
 
+# Docker Compose: host bind-mount for /app/data (SQLite + runtime files)
+data/
+
 # IDE / OS
 .idea/
 .vscode/
