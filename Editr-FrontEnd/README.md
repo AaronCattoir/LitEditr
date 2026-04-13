@@ -1,4 +1,4 @@
-# Editr frontend
+# LitEditr frontend
 
 Vite + React editor UI. API calls go to the narrative DAG backend (`/v1/*`).
 

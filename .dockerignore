@@ -1,3 +1,7 @@
+# Stray duplicate frontend checkouts (canonical: Editr-FrontEnd/)
+liteditr-frontend/
+LitEditr-FrontEnd/
+
 # Dependencies and build outputs
 **/node_modules
 **/dist

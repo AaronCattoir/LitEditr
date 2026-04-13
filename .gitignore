@@ -38,3 +38,7 @@ artifacts/graphs/*.png
 
 # Cursor local state
 .cursor/
+
+# Stray duplicate frontend trees (canonical app is Editr-FrontEnd/; npm package name: liteditr-frontend)
+liteditr-frontend/
+LitEditr-FrontEnd/

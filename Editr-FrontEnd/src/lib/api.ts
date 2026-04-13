@@ -1,5 +1,5 @@
 /**
- * Editr API client: documents, chapters, revisions, analyze (async job), quick-coach, bookmarks.
+ * LitEditr API client: documents, chapters, revisions, analyze (async job), quick-coach, bookmarks.
  * Set VITE_USE_MOCK_API=true to use local delays + mock copy (no backend).
  */
 

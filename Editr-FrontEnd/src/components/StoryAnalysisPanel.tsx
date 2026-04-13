@@ -343,7 +343,7 @@ export function StoryAnalysisPanel({
               if (!apiHasStoryWideKey) {
                 return (
                   <p className="text-sm text-ink-light">
-                    Story-wide fields are not in the API response. Restart the Python API after updating Editr so{' '}
+                    Story-wide fields are not in the API response. Restart the Python API after updating LitEditr so{' '}
                     <code className="text-xs bg-overlay px-1 rounded">GET /v1/revisions/…/latest-analysis</code> includes{' '}
                     <code className="text-xs bg-overlay px-1 rounded">story_wide</code>, then refresh this page.
                   </p>

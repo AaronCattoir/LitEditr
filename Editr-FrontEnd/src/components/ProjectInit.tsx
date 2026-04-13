@@ -306,7 +306,7 @@ export function ProjectInit({ onBootstrap }: ProjectInitProps) {
             <Feather size={24} />
           </div>
           <div>
-            <h1 className="font-serif font-semibold text-2xl tracking-tight">Welcome to Editr</h1>
+            <h1 className="font-serif font-semibold text-2xl tracking-tight">Welcome to LitEditr</h1>
             <p className="text-sm text-ink-light">Create a project or open an existing one.</p>
           </div>
         </div>
