@@ -7,7 +7,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 import narrative_dag.config as config_module
-from narrative_dag.llm import build_run_llm_bundle, resolve_run_llm_provider
+from narrative_dag.llm import build_run_llm_bundle, extract_text_from_ai_message, resolve_run_llm_provider
 from narrative_dag.pet_soul import parse_soul_sections
 from narrative_dag.quick_coach_story_chat import QUICK_COACH_STORY_CHAT_USER_MESSAGE
 from narrative_dag.schemas import ContextBundle
@@ -222,8 +222,7 @@ User message:
 """
     msgs.append(HumanMessage(content=body))
     out = llm.invoke(msgs)
-    text = getattr(out, "content", None) or str(out)
-    return text if isinstance(text, str) else str(text)
+    return extract_text_from_ai_message(out)
 
 
 def story_wide_from_document_state(ds_any: Any) -> dict[str, Any] | None:

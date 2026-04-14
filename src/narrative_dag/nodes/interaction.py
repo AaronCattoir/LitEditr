@@ -7,7 +7,7 @@ from typing import Any, Literal
 from langchain_core.messages import HumanMessage
 
 import narrative_dag.llm as llm_runtime
-from narrative_dag.llm import structured_invoke
+from narrative_dag.llm import extract_text_from_ai_message, structured_invoke
 from narrative_dag.prompt_context import PromptContext, format_prompt_context
 from narrative_dag.prompts.interaction import explain_prompt, reconsider_prompt
 from narrative_dag.schemas import ContextBundle, EditorJudgment
@@ -69,8 +69,7 @@ def judge_explainer(bundle: ContextBundle, user_message: str, llm: Any) -> str:
     response = llm.invoke([HumanMessage(content=prompt)])
     if isinstance(response, str):
         return response
-    content = getattr(response, "content", "")
-    return content if isinstance(content, str) else str(content)
+    return extract_text_from_ai_message(response)
 
 
 def judge_reconsideration(bundle: ContextBundle, user_message: str, llm: Any) -> EditorJudgment:
